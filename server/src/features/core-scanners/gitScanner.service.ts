@@ -38,16 +38,24 @@ export const gitScannerService = {
     const randomId = crypto.randomUUID();
     const tempDirName = `appsec-git-workspace-${randomId}`;
     const workspacePath = path.join(os.tmpdir(), tempDirName);
+
+    // Spool file paths for all three tools
     const semgrepIgnorePath = path.join(workspacePath, ".semgrepignore");
-    // Spool Semgrep JSON to a file so we don't lose findings to a tripped maxBuffer
     const semgrepOutputPath = path.join(
       os.tmpdir(),
       `appsec-semgrep-${randomId}.json`,
     );
+    const gitleaksOutputPath = path.join(
+      os.tmpdir(),
+      `appsec-gitleaks-${randomId}.json`,
+    );
+    const trivyOutputPath = path.join(
+      os.tmpdir(),
+      `appsec-trivy-${randomId}.json`,
+    );
 
     try {
-      // Pre-clone size guard — ask GitHub how big the repo is BEFORE cloning. Cheap defense
-      // against someone submitting torvalds/linux and freezing the disk. GitHub returns size in KB.
+      // Pre-clone size guard
       try {
         const githubMatch = repoUrl.match(
           /github\.com[/:]([\w.\-]+)\/([\w.\-]+?)(?:\.git)?(?:[/?#]|$)/i,
@@ -72,19 +80,12 @@ export const gitScannerService = {
             process.stdout.write(
               `[GIT_SCAN_SIZE_CHECK] Reported repository size: ${sizeMb.toFixed(2)} MB\n`,
             );
-            // Hard cap at 500MB — generous, but rejects mono-repos that would freeze the host
             if (sizeKb > 500 * 1024) {
               throw new Error(
                 `Repository too large for scan engine: ${sizeMb.toFixed(0)} MB (cap is 500 MB). Try a smaller repo or a sub-path.`,
               );
             }
           } else {
-            // GitHub returns 403 with X-RateLimit-Remaining: 0 when the unauthenticated
-            // limit (60/hour per IP) is exhausted. Distinguish this from a 404
-            // (repo doesn't exist or is private) so we don't blame the user when it's
-            // really our IP getting hammered. We still proceed without the size guard,
-            // but log the cause clearly so ops can grep [GITHUB_RATE_LIMITED] and decide
-            // whether to add a GITHUB_TOKEN to lift the cap to 5000/hour.
             const rateLimitRemaining = sizeRes.headers.get(
               "x-ratelimit-remaining",
             );
@@ -95,24 +96,23 @@ export const gitScannerService = {
                 ? new Date(resetEpoch * 1000).toISOString()
                 : "unknown";
               process.stderr.write(
-                `[GITHUB_RATE_LIMITED] Unauthenticated GitHub API exhausted (60/hr cap hit). Resets at ${resetIso}. Size pre-check skipped — clone will proceed without size guard. Set a GITHUB_TOKEN env var to lift the limit.\n`,
+                `[GITHUB_RATE_LIMITED] Unauthenticated GitHub API exhausted (60/hr cap hit). Resets at ${resetIso}. Size pre-check skipped.\n`,
               );
             } else if (sizeRes.status === 404) {
               process.stderr.write(
-                `[GIT_SCAN_SIZE_CHECK] GitHub API 404 — repo not found or is private. Proceeding to clone (will fail if private).\n`,
+                `[GIT_SCAN_SIZE_CHECK] GitHub API 404 — repo not found or is private. Proceeding to clone.\n`,
               );
             } else {
               process.stderr.write(
-                `[GIT_SCAN_SIZE_CHECK] GitHub API replied ${sizeRes.status} (rate-remaining=${rateLimitRemaining}) — proceeding without size guard.\n`,
+                `[GIT_SCAN_SIZE_CHECK] GitHub API replied ${sizeRes.status} — proceeding without size guard.\n`,
               );
             }
           }
         }
       } catch (sizeCheckErr: any) {
         if (sizeCheckErr.message?.includes("Repository too large")) {
-          throw sizeCheckErr; // re-raise hard size cap
+          throw sizeCheckErr;
         }
-        // Network failure to GitHub API is non-fatal — proceed with clone
         process.stderr.write(
           `[GIT_SCAN_SIZE_CHECK] Size pre-check failed softly: ${sizeCheckErr.message}\n`,
         );
@@ -122,10 +122,6 @@ export const gitScannerService = {
         `[GIT_SCAN_CLONE] [${new Date().toISOString()}] Cloning repository via secure async child process into ephemeral workspace...\n`,
       );
 
-      // Async execFile — event loop stays responsive while clone runs.
-      // Wrap separately so we can distinguish "git binary not installed on this host"
-      // (ENOENT — server misconfiguration) from "clone failed because repo is private
-      // or doesn't exist" (different exit code) from "network/timeout".
       try {
         await execFileAsync(
           "git",
@@ -134,17 +130,10 @@ export const gitScannerService = {
         );
       } catch (cloneErr: any) {
         if (cloneErr?.code === "ENOENT") {
-          process.stderr.write(
-            `[GIT_SCAN_CLONE_MISSING_BIN] 'git' binary not found on PATH. This is a server provisioning bug. err=${cloneErr.message}\n`,
-          );
-          throw new Error(
-            "Server is missing the 'git' binary. The administrator needs to install git on the host. This is not your fault.",
-          );
+          throw new Error("Server is missing the 'git' binary.");
         }
         if (cloneErr?.killed && cloneErr?.signal === "SIGTERM") {
-          throw new Error(
-            "Repository clone exceeded the 45-second timeout. The repo is too large or your network to GitHub is slow.",
-          );
+          throw new Error("Repository clone exceeded the 45-second timeout.");
         }
         const stderrText = String(cloneErr?.stderr || "").substring(0, 500);
         if (
@@ -152,12 +141,9 @@ export const gitScannerService = {
           stderrText.includes("not found")
         ) {
           throw new Error(
-            "GitHub returned 'Repository not found'. Either the repo doesn't exist or it's private (private repo scanning isn't supported yet).",
+            "GitHub returned 'Repository not found'. Either the repo doesn't exist or it's private.",
           );
         }
-        process.stderr.write(
-          `[GIT_SCAN_CLONE_FAIL] code=${cloneErr?.code} signal=${cloneErr?.signal} | ${cloneErr?.message}\nstderr: ${stderrText}\n`,
-        );
         throw new Error(
           `Repository clone failed: ${cloneErr?.message?.substring(0, 200) || "unknown error"}`,
         );
@@ -167,166 +153,44 @@ export const gitScannerService = {
         `[GIT_SCAN_CONTEXT] [${new Date().toISOString()}] Sweeping workspace directory for architecture framework manifests...\n`,
       );
 
-      // Manifest detection — check the most popular ecosystem files at the repo root.
-      // First match wins (priority is roughly: most popular / most informative first).
-      // Truncate manifest contents to 8 KB so a huge package-lock-style file doesn't
-      // dominate the AI prompt and starve the actual findings of attention.
-      const packageJsonPath = path.join(workspacePath, "package.json");
-      const goModPath = path.join(workspacePath, "go.mod");
-      const pyprojectTomlPath = path.join(workspacePath, "pyproject.toml");
-      const requirementsTxtPath = path.join(workspacePath, "requirements.txt");
-      const cargoTomlPath = path.join(workspacePath, "Cargo.toml");
-      const pomXmlPath = path.join(workspacePath, "pom.xml");
-      const buildGradlePath = path.join(workspacePath, "build.gradle");
-      const buildGradleKtsPath = path.join(workspacePath, "build.gradle.kts");
-      const composerJsonPath = path.join(workspacePath, "composer.json");
-      const gemfilePath = path.join(workspacePath, "Gemfile");
+      const manifests = [
+        { path: "package.json", name: "Node.js" },
+        { path: "go.mod", name: "Go language" },
+        { path: "pyproject.toml", name: "Python (modern)" },
+        { path: "requirements.txt", name: "Python dependencies" },
+        { path: "Cargo.toml", name: "Rust" },
+        { path: "pom.xml", name: "Java/Maven" },
+        { path: "build.gradle", name: "Java/Gradle" },
+        { path: "build.gradle.kts", name: "Kotlin/Gradle" },
+        { path: "composer.json", name: "PHP" },
+        { path: "Gemfile", name: "Ruby" },
+      ];
 
-      if (fs.existsSync(packageJsonPath)) {
-        try {
-          const content = fs
-            .readFileSync(packageJsonPath, "utf8")
-            .substring(0, 8192);
-          discoveredContext = `Node.js project detected. package.json manifests contents: ${content}`;
-          process.stdout.write(
-            `[GIT_SCAN_CONTEXT_FOUND] Captured package.json project context metadata successfully.\n`,
-          );
-        } catch (e: any) {
-          process.stderr.write(
-            `[CONTEXT_ERR] Failed reading package.json: ${e.message}\n`,
-          );
-        }
-      } else if (fs.existsSync(goModPath)) {
-        try {
-          const content = fs.readFileSync(goModPath, "utf8").substring(0, 8192);
-          discoveredContext = `Go language project detected. go.mod manifest contents: ${content}`;
-          process.stdout.write(
-            `[GIT_SCAN_CONTEXT_FOUND] Captured go.mod project context metadata successfully.\n`,
-          );
-        } catch (e: any) {
-          process.stderr.write(
-            `[CONTEXT_ERR] Failed reading go.mod: ${e.message}\n`,
-          );
-        }
-      } else if (fs.existsSync(pyprojectTomlPath)) {
-        try {
-          const content = fs
-            .readFileSync(pyprojectTomlPath, "utf8")
-            .substring(0, 8192);
-          discoveredContext = `Python project detected (modern). pyproject.toml manifest contents: ${content}`;
-          process.stdout.write(
-            `[GIT_SCAN_CONTEXT_FOUND] Captured pyproject.toml project context metadata successfully.\n`,
-          );
-        } catch (e: any) {
-          process.stderr.write(
-            `[CONTEXT_ERR] Failed reading pyproject.toml: ${e.message}\n`,
-          );
-        }
-      } else if (fs.existsSync(requirementsTxtPath)) {
-        try {
-          const content = fs
-            .readFileSync(requirementsTxtPath, "utf8")
-            .substring(0, 8192);
-          discoveredContext = `Python dependencies list detected. requirements.txt contents: ${content}`;
-          process.stdout.write(
-            `[GIT_SCAN_CONTEXT_FOUND] Captured requirements.txt project context metadata successfully.\n`,
-          );
-        } catch (e: any) {
-          process.stderr.write(
-            `[CONTEXT_ERR] Failed reading requirements.txt: ${e.message}\n`,
-          );
-        }
-      } else if (fs.existsSync(cargoTomlPath)) {
-        try {
-          const content = fs
-            .readFileSync(cargoTomlPath, "utf8")
-            .substring(0, 8192);
-          discoveredContext = `Rust project detected. Cargo.toml manifest contents: ${content}`;
-          process.stdout.write(
-            `[GIT_SCAN_CONTEXT_FOUND] Captured Cargo.toml project context metadata successfully.\n`,
-          );
-        } catch (e: any) {
-          process.stderr.write(
-            `[CONTEXT_ERR] Failed reading Cargo.toml: ${e.message}\n`,
-          );
-        }
-      } else if (fs.existsSync(pomXmlPath)) {
-        try {
-          const content = fs
-            .readFileSync(pomXmlPath, "utf8")
-            .substring(0, 8192);
-          discoveredContext = `Java/Maven project detected. pom.xml manifest contents: ${content}`;
-          process.stdout.write(
-            `[GIT_SCAN_CONTEXT_FOUND] Captured pom.xml project context metadata successfully.\n`,
-          );
-        } catch (e: any) {
-          process.stderr.write(
-            `[CONTEXT_ERR] Failed reading pom.xml: ${e.message}\n`,
-          );
-        }
-      } else if (fs.existsSync(buildGradlePath)) {
-        try {
-          const content = fs
-            .readFileSync(buildGradlePath, "utf8")
-            .substring(0, 8192);
-          discoveredContext = `Java/Gradle project detected. build.gradle manifest contents: ${content}`;
-          process.stdout.write(
-            `[GIT_SCAN_CONTEXT_FOUND] Captured build.gradle project context metadata successfully.\n`,
-          );
-        } catch (e: any) {
-          process.stderr.write(
-            `[CONTEXT_ERR] Failed reading build.gradle: ${e.message}\n`,
-          );
-        }
-      } else if (fs.existsSync(buildGradleKtsPath)) {
-        try {
-          const content = fs
-            .readFileSync(buildGradleKtsPath, "utf8")
-            .substring(0, 8192);
-          discoveredContext = `Kotlin/Gradle project detected. build.gradle.kts manifest contents: ${content}`;
-          process.stdout.write(
-            `[GIT_SCAN_CONTEXT_FOUND] Captured build.gradle.kts project context metadata successfully.\n`,
-          );
-        } catch (e: any) {
-          process.stderr.write(
-            `[CONTEXT_ERR] Failed reading build.gradle.kts: ${e.message}\n`,
-          );
-        }
-      } else if (fs.existsSync(composerJsonPath)) {
-        try {
-          const content = fs
-            .readFileSync(composerJsonPath, "utf8")
-            .substring(0, 8192);
-          discoveredContext = `PHP project detected. composer.json manifest contents: ${content}`;
-          process.stdout.write(
-            `[GIT_SCAN_CONTEXT_FOUND] Captured composer.json project context metadata successfully.\n`,
-          );
-        } catch (e: any) {
-          process.stderr.write(
-            `[CONTEXT_ERR] Failed reading composer.json: ${e.message}\n`,
-          );
-        }
-      } else if (fs.existsSync(gemfilePath)) {
-        try {
-          const content = fs
-            .readFileSync(gemfilePath, "utf8")
-            .substring(0, 8192);
-          discoveredContext = `Ruby project detected. Gemfile manifest contents: ${content}`;
-          process.stdout.write(
-            `[GIT_SCAN_CONTEXT_FOUND] Captured Gemfile project context metadata successfully.\n`,
-          );
-        } catch (e: any) {
-          process.stderr.write(
-            `[CONTEXT_ERR] Failed reading Gemfile: ${e.message}\n`,
-          );
+      for (const manifest of manifests) {
+        const fullPath = path.join(workspacePath, manifest.path);
+        if (fs.existsSync(fullPath)) {
+          try {
+            const content = fs
+              .readFileSync(fullPath, "utf8")
+              .substring(0, 8192);
+            discoveredContext = `${manifest.name} project detected. ${manifest.path} manifest contents: ${content}`;
+            process.stdout.write(
+              `[GIT_SCAN_CONTEXT_FOUND] Captured ${manifest.path} metadata successfully.\n`,
+            );
+            break;
+          } catch (e: any) {
+            process.stderr.write(
+              `[CONTEXT_ERR] Failed reading ${manifest.path}: ${e.message}\n`,
+            );
+          }
         }
       }
 
       process.stdout.write(
-        `[GIT_SCAN_IGNORE_CONFIG] [${new Date().toISOString()}] Generating strict dynamic .semgrepignore file to prevent memory exhaustion and false positives...\n`,
+        `[GIT_SCAN_IGNORE_CONFIG] Generating strict dynamic .semgrepignore file...\n`,
       );
 
-      // Robust exclude list to prevent AST parser from crashing on heavy dependency bundles
+      // UPDATED IGNORE CONFIG: Removed Section 5 (Tests/Coverage) so vulnerabilities in test folders get caught
       const ignoreContent = `
 # 1. CRITICAL: Force Semgrep to respect the project's .gitignore
 :include .gitignore
@@ -363,17 +227,7 @@ out/
 .DS_Store
 Thumbs.db
 
-# 5. Testing, Docs, & Static Code Coverage
-coverage/
-.nyc_output/
-*.test.js
-*.spec.js
-*.test.ts
-*.spec.ts
-spec/
-tests/
-
-# 6. Compiled, Minified, Data, & Asset Files
+# 5. Compiled, Minified, Data, & Asset Files
 *.min.js
 *.map
 *.bundle.js
@@ -392,155 +246,181 @@ tests/
       fs.writeFileSync(semgrepIgnorePath, ignoreContent);
 
       process.stdout.write(
-        `[GIT_SCAN_SEMGREP] [${new Date().toISOString()}] Invoking Semgrep CLI AST security engine analyzer (async, output spooled to file)...\n`,
+        `[GIT_SCAN_EXECUTE] [${new Date().toISOString()}] Invoking Parallel Scanner Engines (Semgrep, Gitleaks, Trivy)...\n`,
       );
 
-      // Use a fixed ruleset instead of --config=auto so:
-      //   (a) we're not network-dependent on each scan (auto pulls rules from the registry)
-      //   (b) results are reproducible across scans
-      // Use --output to spool to a file so a massive JSON blob can't blow past maxBuffer
-      // and silently lose all findings.
-      try {
-        await execFileAsync(
+      // Execute all 3 CLI tools concurrently. We use allSettled because non-zero exit codes (finding bugs) throw errors in execFileAsync.
+      const scanPromises = [
+        execFileAsync(
           "semgrep",
           [
             "scan",
             "--json",
             "--quiet",
+            "--config=p/owasp-top-ten",
             "--config=p/security-audit",
-            "--config=p/secrets",
             "--output",
             semgrepOutputPath,
             workspacePath,
           ],
-          {
-            timeout: 120000, // 2 minutes
-            // maxBuffer here only constrains stderr since stdout goes to --output file
-            maxBuffer: 4 * 1024 * 1024,
-          },
-        );
-      } catch (semgrepErr: any) {
-        // Semgrep exits non-zero when it finds vulnerabilities — that's expected and the
-        // output file is still written. Three failure modes we need to distinguish:
-        //   1. ENOENT — the 'semgrep' binary isn't installed on the host. Server bug.
-        //   2. Timed out — scan exceeded 120s, output file may be incomplete.
-        //   3. Crashed before writing output — actual Semgrep bug or OOM.
-        if (semgrepErr?.code === "ENOENT") {
-          process.stderr.write(
-            `[SEMGREP_MISSING_BIN] 'semgrep' binary not found on PATH. This is a server provisioning bug — install semgrep via 'pip install semgrep' or your package manager. err=${semgrepErr.message}\n`,
-          );
-          throw new Error(
-            "Server is missing the 'semgrep' binary. The administrator needs to install Semgrep on the host. This is not your fault.",
-          );
-        }
-        if (semgrepErr?.killed && semgrepErr?.signal === "SIGTERM") {
-          process.stderr.write(
-            `[SEMGREP_TIMEOUT] Semgrep exceeded the 120s timeout. Output file ${fs.existsSync(semgrepOutputPath) ? "WAS written (partial)" : "was NOT written"}.\n`,
-          );
-          // Don't throw — fall through and try to parse whatever was written
-        } else if (!fs.existsSync(semgrepOutputPath)) {
-          process.stderr.write(
-            `[SEMGREP_EXEC_ERROR] Semgrep exited and produced no output file. code=${semgrepErr?.code || "n/a"} signal=${semgrepErr?.signal || "n/a"} | ${semgrepErr.message}\n`,
-          );
-        }
-      }
+          { timeout: 120000, maxBuffer: 4 * 1024 * 1024 },
+        ),
+        execFileAsync(
+          "gitleaks",
+          [
+            "detect",
+            "--source",
+            workspacePath,
+            "--report-path",
+            gitleaksOutputPath,
+            "--no-git",
+            "--report-format",
+            "json",
+          ],
+          { timeout: 120000, maxBuffer: 4 * 1024 * 1024 },
+        ),
+        execFileAsync(
+          "trivy",
+          [
+            "fs",
+            workspacePath,
+            "--format",
+            "json",
+            "--output",
+            trivyOutputPath,
+            "--scanners",
+            "vuln",
+          ],
+          { timeout: 120000, maxBuffer: 4 * 1024 * 1024 },
+        ),
+      ];
 
-      let semgrepRawOutput = "";
+      await Promise.allSettled(scanPromises);
+
+      process.stdout.write(
+        `[GIT_SCAN_PROCESSING] Parsing localized scanner JSON spools...\n`,
+      );
+
+      // ==========================================
+      // PARSER 1: SEMGREP (SAST - Code Logic)
+      // ==========================================
       if (fs.existsSync(semgrepOutputPath)) {
-        semgrepRawOutput = fs.readFileSync(semgrepOutputPath, "utf8");
+        try {
+          const semgrepRaw = fs.readFileSync(semgrepOutputPath, "utf8");
+          if (semgrepRaw.trim().length > 0) {
+            const semgrepResults = JSON.parse(semgrepRaw).results || [];
+            process.stdout.write(
+              `[SEMGREP_PARSER] Extracted ${semgrepResults.length} findings.\n`,
+            );
+
+            for (const targetFinding of semgrepResults) {
+              const rawFilePath = targetFinding.path || "unknown_file";
+              const relativePath = rawFilePath.replace(workspacePath + "/", "");
+              const ruleIdName =
+                targetFinding.check_id || "Generic Ast Violation Rule";
+              const targetExtra = targetFinding.extra || {};
+
+              let translatedSeverity: "Low" | "Medium" | "High" | "Critical" =
+                "Medium";
+              const rawSeverityString = String(
+                targetExtra.severity || "",
+              ).toUpperCase();
+
+              if (rawSeverityString === "ERROR") translatedSeverity = "High";
+              else if (rawSeverityString === "WARNING")
+                translatedSeverity = "Medium";
+              else if (rawSeverityString === "INFO") translatedSeverity = "Low";
+
+              findings.push({
+                file_path: relativePath,
+                vulnerability_name: `Code Flaw: ${ruleIdName}`,
+                severity: translatedSeverity,
+                code_snippet: `Details: ${targetExtra.message || "No description"}\n\nCode context:\n${targetExtra.lines || ""}`,
+              });
+            }
+          }
+        } catch (e: any) {
+          process.stderr.write(
+            `[SEMGREP_PARSE_ERROR] Failed to parse Semgrep JSON: ${e.message}\n`,
+          );
+        }
       }
 
-      if (semgrepRawOutput.trim().length > 0) {
-        const parsedJson = JSON.parse(semgrepRawOutput);
-        const semgrepResults = parsedJson.results || [];
-
-        process.stdout.write(
-          `[GIT_SCAN_PROCESSING] Parsing ${semgrepResults.length} structured vulnerabilities found by Semgrep...\n`,
-        );
-
-        for (const targetFinding of semgrepResults) {
-          if (findings.length >= 75) {
-            process.stderr.write(
-              `[GIT_SCAN_THROTTLE] Threshold of 75 findings reached. Halting collection translation.\n`,
+      // ==========================================
+      // PARSER 2: GITLEAKS (Secrets & Keys)
+      // ==========================================
+      if (fs.existsSync(gitleaksOutputPath)) {
+        try {
+          const gitleaksRaw = fs.readFileSync(gitleaksOutputPath, "utf8");
+          if (gitleaksRaw.trim().length > 0) {
+            const gitleaksResults = JSON.parse(gitleaksRaw) || [];
+            process.stdout.write(
+              `[GITLEAKS_PARSER] Extracted ${gitleaksResults.length} findings.\n`,
             );
-            break;
+
+            for (const leak of gitleaksResults) {
+              const relativePath = (leak.File || "unknown_file").replace(
+                workspacePath + "/",
+                "",
+              );
+              findings.push({
+                file_path: relativePath,
+                vulnerability_name: `Exposed Secret: ${leak.Description || "Hardcoded Key"}`,
+                severity: "Critical",
+                code_snippet: `Match string: ${leak.Match}\nLocated on Line: ${leak.StartLine || "Unknown"}`,
+              });
+            }
           }
+        } catch (e: any) {
+          process.stderr.write(
+            `[GITLEAKS_PARSE_ERROR] Failed to parse Gitleaks JSON: ${e.message}\n`,
+          );
+        }
+      }
 
-          const rawFilePath = targetFinding.path || "unknown_file";
-          const relativePath = rawFilePath.replace(workspacePath + "/", "");
-          const ruleIdName =
-            targetFinding.check_id || "Generic Ast Violation Rule";
-          const targetExtra = targetFinding.extra || {};
-          const msgDetails =
-            targetExtra.message ||
-            "No technical description yielded by engine rule lookup match.";
-          const linesSnippet =
-            targetExtra.lines || "[No source lines snippet pulled]";
+      // ==========================================
+      // PARSER 3: TRIVY (SCA - Dependencies)
+      // ==========================================
+      if (fs.existsSync(trivyOutputPath)) {
+        try {
+          const trivyRaw = fs.readFileSync(trivyOutputPath, "utf8");
+          if (trivyRaw.trim().length > 0) {
+            const trivyData = JSON.parse(trivyRaw);
+            const trivyResults = trivyData.Results || [];
+            let trivyCount = 0;
 
-          // Severity mapping uses Semgrep's structured metadata where available
-          // (impact + confidence + likelihood + CWE/OWASP tags), falling back to
-          // the rule's coarse ERROR/WARNING/INFO + heuristic on rule name.
-          let translatedSeverity: "Low" | "Medium" | "High" | "Critical" =
-            "Medium";
-          const rawSeverityString = String(
-            targetExtra.severity || "",
-          ).toUpperCase();
-          const ruleMetadata = targetExtra.metadata || {};
-          const ruleImpact = String(ruleMetadata.impact || "").toUpperCase();
-          const ruleConfidence = String(
-            ruleMetadata.confidence || "",
-          ).toUpperCase();
-          const ruleLikelihood = String(
-            ruleMetadata.likelihood || "",
-          ).toUpperCase();
-          const cweTags = Array.isArray(ruleMetadata.cwe)
-            ? ruleMetadata.cwe.join(" ")
-            : String(ruleMetadata.cwe || "");
-          const owaspTags = Array.isArray(ruleMetadata.owasp)
-            ? ruleMetadata.owasp.join(" ")
-            : String(ruleMetadata.owasp || "");
+            for (const res of trivyResults) {
+              const relativePath = (res.Target || "package_manifest").replace(
+                workspacePath + "/",
+                "",
+              );
+              for (const vuln of res.Vulnerabilities || []) {
+                trivyCount++;
+                let mappedSev: "Low" | "Medium" | "High" | "Critical" =
+                  "Medium";
+                const tSev = String(vuln.Severity || "").toUpperCase();
 
-          if (rawSeverityString === "ERROR") {
-            translatedSeverity = "High";
-          } else if (rawSeverityString === "WARNING") {
-            translatedSeverity = "Medium";
-          } else if (rawSeverityString === "INFO") {
-            translatedSeverity = "Low";
+                if (tSev === "CRITICAL") mappedSev = "Critical";
+                else if (tSev === "HIGH") mappedSev = "High";
+                else if (tSev === "LOW" || tSev === "UNKNOWN")
+                  mappedSev = "Low";
+
+                findings.push({
+                  file_path: relativePath,
+                  vulnerability_name: `Vulnerable Dependency: ${vuln.PkgName} (${vuln.VulnerabilityID})`,
+                  severity: mappedSev,
+                  code_snippet: `Package: ${vuln.PkgName}\nInstalled Version: ${vuln.InstalledVersion}\nFixed in: ${vuln.FixedVersion || "No fix available"}\nDescription: ${vuln.Title || vuln.Description || "N/A"}`,
+                });
+              }
+            }
+            process.stdout.write(
+              `[TRIVY_PARSER] Extracted ${trivyCount} findings.\n`,
+            );
           }
-
-          // Bump to Critical when Semgrep itself signals HIGH impact AND HIGH confidence,
-          // OR when the rule is tagged with a top-tier injection / RCE / hardcoded-secret CWE.
-          // CWE-78 = OS Command Injection, CWE-89 = SQLi, CWE-94 = Code Injection,
-          // CWE-502 = Deserialization, CWE-798 = Hardcoded Credentials.
-          const criticalCweHit =
-            /\b(?:CWE-78|CWE-89|CWE-94|CWE-502|CWE-798)\b/i.test(cweTags);
-          const a01HardcodedSecret =
-            /A0[12]/.test(owaspTags) &&
-            /secret|credential/i.test(ruleIdName.toLowerCase());
-
-          if (
-            (ruleImpact === "HIGH" && ruleConfidence === "HIGH") ||
-            (ruleImpact === "HIGH" && ruleLikelihood === "HIGH") ||
-            criticalCweHit ||
-            a01HardcodedSecret ||
-            ruleIdName.toLowerCase().includes("secret") ||
-            ruleIdName.toLowerCase().includes("injection") ||
-            ruleIdName.toLowerCase().includes("rce")
-          ) {
-            translatedSeverity = "Critical";
-          }
-
-          // Demote to Low if Semgrep itself says LOW impact regardless of severity bucket
-          if (ruleImpact === "LOW" && translatedSeverity !== "Critical") {
-            translatedSeverity = "Low";
-          }
-
-          findings.push({
-            file_path: relativePath,
-            vulnerability_name: ruleIdName,
-            severity: translatedSeverity,
-            code_snippet: `Details: ${msgDetails}\n\nCode context:\n${linesSnippet}`,
-          });
+        } catch (e: any) {
+          process.stderr.write(
+            `[TRIVY_PARSE_ERROR] Failed to parse Trivy JSON: ${e.message}\n`,
+          );
         }
       }
     } catch (err: any) {
@@ -548,32 +428,26 @@ tests/
         `[GIT_SCAN_CRASH] [${new Date().toISOString()}] Git execution failure trace down: ${err.message}\n`,
       );
       throw new Error(
-        "Repository cloning or static AST analysis processing execution failed.",
+        "Repository cloning or static analysis processing execution failed.",
       );
     } finally {
-      // 1. Clean up the dynamic ignore file
-      try {
-        if (fs.existsSync(semgrepIgnorePath)) {
-          fs.unlinkSync(semgrepIgnorePath);
+      // Disk Cleanup Routine
+      const filesToClean = [
+        semgrepIgnorePath,
+        semgrepOutputPath,
+        gitleaksOutputPath,
+        trivyOutputPath,
+      ];
+      for (const filePath of filesToClean) {
+        try {
+          if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        } catch (cleanupErr: any) {
+          process.stderr.write(
+            `[DISK_WARNING] Failed to clean file ${filePath}: ${cleanupErr.message}\n`,
+          );
         }
-      } catch (cleanupErr: any) {
-        process.stderr.write(
-          `[DISK_WARNING] Failed to clean generated .semgrepignore file: ${cleanupErr.message}\n`,
-        );
       }
 
-      // 2. Clean up the spooled Semgrep output JSON
-      try {
-        if (fs.existsSync(semgrepOutputPath)) {
-          fs.unlinkSync(semgrepOutputPath);
-        }
-      } catch (cleanupErr: any) {
-        process.stderr.write(
-          `[DISK_WARNING] Failed to clean spooled Semgrep output file: ${cleanupErr.message}\n`,
-        );
-      }
-
-      // 3. Clean up the cloned repository workspace
       try {
         if (fs.existsSync(workspacePath)) {
           process.stdout.write(
@@ -588,21 +462,21 @@ tests/
       }
     }
 
-    // Dedupe: Semgrep frequently flags the same vulnerability on consecutive lines of the
-    // same file with the same rule ID. Sending each as a separate AI finding wastes tokens.
-    // Key by rule + file + first 60 chars of snippet so true duplicates collapse but
-    // genuinely distinct instances in the same file are preserved.
+    // Deduplicate identical findings across tools to save AI tokens
     const dedupedFindings: GitScanFinding[] = [];
     const seenFindingKeys = new Set<string>();
     for (const f of findings) {
-      const dedupKey = `${f.vulnerability_name}|${f.file_path}|${f.code_snippet.substring(0, 60)}`;
+      // Throttle array to prevent completely blowing out the AI prompt limit
+      if (dedupedFindings.length >= 75) break;
+
+      const dedupKey = `${f.vulnerability_name}|${f.file_path}|${f.code_snippet.substring(0, 40)}`;
       if (seenFindingKeys.has(dedupKey)) continue;
       seenFindingKeys.add(dedupKey);
       dedupedFindings.push(f);
     }
 
     process.stdout.write(
-      `[GIT_SCAN_FINALIZE] [${new Date().toISOString()}] Static code sweep complete. Findings: ${dedupedFindings.length} (deduped from ${findings.length})\n`,
+      `[GIT_SCAN_FINALIZE] [${new Date().toISOString()}] Multi-engine scan sweep complete. Findings: ${dedupedFindings.length} (deduped from ${findings.length})\n`,
     );
 
     return {

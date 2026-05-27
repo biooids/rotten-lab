@@ -7,6 +7,7 @@ import { useGetReportQuery } from "@/lib/features/ai/gemini/geminiApiSlice";
 import { useGetClaudeReportQuery } from "@/lib/features/ai/claude/claudeApiSlice";
 import CornerFlourish from "@/components/shared/CornerFlourish";
 import VulnerabilityCard from "./VulnerabilityCard";
+import FunFactLoader from "@/components/shared/FunFactLoader"; // <--- NEW IMPORT
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
@@ -183,16 +184,12 @@ export default function ReportDetails({
           </div>
         )}
 
-        {/* POLLING STATE UI */}
+        {/* POLLING STATE UI - REPLACED WITH NEW COMPONENT */}
         {isScanRunning && (
-          <div className="py-16 text-center flex flex-col items-center gap-3">
-            <span className="text-xs font-bold opacity-70">
-              Scan in progress...{" "}
-            </span>
-            <span className="text-[10px] font-bold opacity-50 animate-pulse">
-              Analyzing target, please wait lil bro...
-            </span>
-          </div>
+          <FunFactLoader
+            engine={engine}
+            title="Analyzing target, please wait lil bro..."
+          />
         )}
 
         {/* COMPLETED STATE UI */}

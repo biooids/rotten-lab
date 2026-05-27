@@ -81,6 +81,26 @@ const WEB_SCAN_RULES = [
   },
 ];
 
+// Aggressive Fuzzing Payloads for the advanced DOM fuzzer
+const FUZZ_PAYLOADS = [
+  `"><svg/onload=prompt('APPSEC_SCAN_XSS')>`, // Active XSS reflection check
+  `' OR 1=1 --`, // Classic SQLi bypass
+  `{"$gt": ""}`, // NoSQL injection check for modern JSON APIs
+];
+
+// Heuristic Keywords for prioritizing deep targets
+const HIGH_PRIORITY_TERMS = [
+  "admin",
+  "login",
+  "auth",
+  "dashboard",
+  "account",
+  "settings",
+  "profile",
+  "api",
+  "user",
+];
+
 export const webScannerService = {
   // SSRF Protection Layer: Resolves DNS and strictly rejects private, loopback, and metadata IPs
   async validateNetworkTarget(targetUrl: string): Promise<void> {
@@ -97,29 +117,28 @@ export const webScannerService = {
 
         // IPv4 blacklist
         if (family === 4) {
-          if (ip === "169.254.169.254") throw new Error("SSRF Protection"); // AWS / GCP metadata
+          if (ip === "169.254.169.254") throw new Error("SSRF Protection");
           if (ip.startsWith("127.") || ip === "0.0.0.0")
-            throw new Error("SSRF Protection"); // Loopback / null route
+            throw new Error("SSRF Protection");
           if (ip.startsWith("10.") || ip.startsWith("192.168."))
-            throw new Error("SSRF Protection"); // RFC 1918
-          if (ip.startsWith("169.254.")) throw new Error("SSRF Protection"); // Link-local
+            throw new Error("SSRF Protection");
+          if (ip.startsWith("169.254.")) throw new Error("SSRF Protection");
           if (ip.startsWith("172.")) {
             const secondOctet = parseInt(ip.split(".")[1]!, 10);
             if (secondOctet >= 16 && secondOctet <= 31)
-              throw new Error("SSRF Protection"); // RFC 1918 172.16/12
+              throw new Error("SSRF Protection");
           }
         }
 
         // IPv6 blacklist
         if (family === 6) {
           const lower = ip.toLowerCase();
-          if (lower === "::1" || lower === "::") throw new Error("SSRF Protection"); // Loopback / unspecified
+          if (lower === "::1" || lower === "::")
+            throw new Error("SSRF Protection");
           if (lower.startsWith("fe80:") || lower.startsWith("fe80::"))
-            throw new Error("SSRF Protection"); // Link-local fe80::/10
-          // Unique local addresses fc00::/7 (covers fc** and fd**)
+            throw new Error("SSRF Protection");
           if (lower.startsWith("fc") || lower.startsWith("fd"))
             throw new Error("SSRF Protection");
-          // 4-in-6 mapped: ::ffff:10.0.0.1 etc — re-evaluate as IPv4
           if (lower.startsWith("::ffff:")) {
             const tail = lower.split("::ffff:")[1] || "";
             if (
@@ -164,13 +183,20 @@ export const webScannerService = {
     const parsedTargetRoot = new URL(targetUrl);
     const originTargetRootString = parsedTargetRoot.origin;
 
-    const crawlQueue: string[] = [targetUrl];
+    // Concurrency Queues and State Trackers
+    const priorityQueue: string[] = [];
+    const standardQueue: string[] = [targetUrl];
     const visitedUrls = new Set<string>();
-    const maxPagesToVisitLimit = 5;
+
+    let activeWorkers = 0;
+    let pagesVisitedCount = 0;
+    const MAX_PAGES_TO_VISIT = 15;
+    const MAX_CONCURRENT_WORKERS = 3;
 
     process.stdout.write(
-      `[WEB_SCAN_BROWSER] Launching headless Chromium multi-page instance loop container...\n`,
+      `[WEB_SCAN_BROWSER] Launching headless Chromium multi-page instance loop container with ${MAX_CONCURRENT_WORKERS} workers...\n`,
     );
+
     const browser = await chromium.launch({
       headless: true,
       args: ["--disable-gpu"],
@@ -184,429 +210,414 @@ export const webScannerService = {
         ignoreHTTPSErrors: true,
       });
 
-      const page = await context.newPage();
+      // CONCURRENT WORKER FUNCTION
+      const workerProcess = async (workerId: number) => {
+        // Infinite loop kept alive as long as there is work or active workers
+        while (true) {
+          if (pagesVisitedCount >= MAX_PAGES_TO_VISIT) break;
 
-      // OPTIMIZATION: Network Request Interception Layer (Aborting heavy media to speed up crawling)
-      await page.route("**/*", (route) => {
-        const type = route.request().resourceType();
-        if (["image", "media", "font", "stylesheet"].includes(type)) {
-          route.abort();
-        } else {
-          route.continue();
-        }
-      });
+          // Pull from priority queue first, otherwise take standard queue
+          const currentUrlToScan =
+            priorityQueue.shift() || standardQueue.shift();
 
-      // NETWORK INTERCEPTOR: Deep JSON & GraphQL Analysis
-      page.on("response", async (response) => {
-        const url = response.url();
-        const request = response.request();
-
-        try {
-          const contentType = response.headers()["content-type"] || "";
-          const status = response.status();
-
-          // Block 1: Catch GraphQL Introspection & Data Queries
-          if (url.includes("/graphql") && request.method() === "POST") {
-            const responseBody = await response.text();
-
-            for (const rule of WEB_SCAN_RULES) {
-              rule.regex.lastIndex = 0;
-              if (rule.regex.test(responseBody)) {
-                const matchIndex = responseBody.search(rule.regex);
-                const startExtract = Math.max(0, matchIndex - 150);
-                const endExtract = Math.min(
-                  responseBody.length,
-                  matchIndex + 350,
-                );
-                const extractedSnippet = responseBody.substring(
-                  startExtract,
-                  endExtract,
-                );
-
-                findings.push({
-                  file_path: `GraphQL Endpoint: ${url}`,
-                  vulnerability_name: `${rule.name} (Caught via GraphQL Response Payload)`,
-                  severity: rule.severity,
-                  code_snippet: `... ${extractedSnippet.trim()} ...`,
-                });
-              }
-            }
-          }
-
-          // Block 2: Standard JSON/JS Bundles
-          else if (
-            contentType.includes("javascript") ||
-            contentType.includes("json") ||
-            url.endsWith(".js") ||
-            url.endsWith(".json")
-          ) {
-            if (status < 200 || status >= 300) return;
-
-            const bodyText = await response.text();
-
-            for (const rule of WEB_SCAN_RULES) {
-              rule.regex.lastIndex = 0;
-              if (rule.regex.test(bodyText)) {
-                const matchIndex = bodyText.search(rule.regex);
-                const startExtract = Math.max(0, matchIndex - 150);
-                const endExtract = Math.min(bodyText.length, matchIndex + 350);
-                const extractedSnippet = bodyText.substring(
-                  startExtract,
-                  endExtract,
-                );
-
-                findings.push({
-                  file_path: url,
-                  vulnerability_name: `${rule.name} (Caught via Network Bundle stream)`,
-                  severity: rule.severity,
-                  code_snippet: `... ${extractedSnippet.trim()} ...`,
-                });
-              }
-            }
-          }
-        } catch (respErr: any) {
-          // Passively ignore network processing timeouts or aborted streams
-        }
-      });
-
-      // MAIN CRAWLING LOOP
-      while (crawlQueue.length > 0 && visitedUrls.size < maxPagesToVisitLimit) {
-        const currentUrlToScan = crawlQueue.shift()!;
-
-        if (visitedUrls.has(currentUrlToScan)) {
-          continue;
-        }
-
-        visitedUrls.add(currentUrlToScan);
-        process.stdout.write(
-          `[SPIDER_CRAWL_LOOP] Processing execution sweep page [${visitedUrls.size}/${maxPagesToVisitLimit}]: ${currentUrlToScan}\n`,
-        );
-
-        try {
-          // networkidle is critical here to bypass React/Next.js hydration spinners
-          const mainResponse = await page.goto(currentUrlToScan, {
-            waitUntil: "networkidle",
-            timeout: 15000,
-          });
-
-          if (mainResponse) {
-            process.stdout.write(
-              `[WEB_SCAN_HEADERS] Auditing HTTP Security Headers for link path target: ${currentUrlToScan}\n`,
-            );
-            const headers = mainResponse.headers();
-
-            if (!headers["strict-transport-security"]) {
-              findings.push({
-                file_path: `HTTP Headers: ${currentUrlToScan}`,
-                vulnerability_name:
-                  "Missing Strict-Transport-Security (HSTS) Header",
-                severity: "Medium",
-                code_snippet:
-                  "Strict-Transport-Security header is missing from the server response profile map.",
-              });
-            }
-
-            if (!headers["content-security-policy"]) {
-              findings.push({
-                file_path: `HTTP Headers: ${currentUrlToScan}`,
-                vulnerability_name:
-                  "Missing Content-Security-Policy (CSP) Header",
-                severity: "High",
-                code_snippet:
-                  "Content-Security-Policy header is missing, leaving application layout vulnerable to cross origin runtime scripts injection.",
-              });
+          if (!currentUrlToScan) {
+            // FIX: Worker Starvation Prevention
+            // If the queue is empty but another worker is actively crawling a page,
+            // wait 500ms and check the queue again for newly discovered links.
+            if (activeWorkers > 0) {
+              await new Promise((resolve) => setTimeout(resolve, 500));
+              continue;
             } else {
-              // CSP exists — audit its value for permissive directives that defeat the policy
-              const cspValue = headers["content-security-policy"] || "";
-              if (/unsafe-inline/i.test(cspValue)) {
+              // If no workers are active and the queue is empty, the site is fully mapped.
+              break;
+            }
+          }
+
+          if (visitedUrls.has(currentUrlToScan)) continue;
+          visitedUrls.add(currentUrlToScan);
+
+          pagesVisitedCount++;
+          activeWorkers++; // Signal to other workers that we are busy processing a page
+
+          process.stdout.write(
+            `[SPIDER_WORKER_${workerId}] Processing execution sweep page [${pagesVisitedCount}/${MAX_PAGES_TO_VISIT}]: ${currentUrlToScan}\n`,
+          );
+
+          try {
+            const page = await context.newPage();
+
+            // OPTIMIZATION: Network Request Interception Layer (Block images/media)
+            await page.route("**/*", (route) => {
+              const type = route.request().resourceType();
+              if (["image", "media", "font", "stylesheet"].includes(type)) {
+                route.abort();
+              } else {
+                route.continue();
+              }
+            });
+
+            // NETWORK INTERCEPTOR: Deep JSON & GraphQL Analysis
+            page.on("response", async (response) => {
+              const url = response.url();
+              const request = response.request();
+
+              try {
+                const contentType = response.headers()["content-type"] || "";
+                const status = response.status();
+
+                // Block 1: Catch GraphQL Introspection & Data Queries
+                if (url.includes("/graphql") && request.method() === "POST") {
+                  const responseBody = await response.text();
+
+                  for (const rule of WEB_SCAN_RULES) {
+                    rule.regex.lastIndex = 0;
+                    if (rule.regex.test(responseBody)) {
+                      const matchIndex = responseBody.search(rule.regex);
+                      const startExtract = Math.max(0, matchIndex - 150);
+                      const endExtract = Math.min(
+                        responseBody.length,
+                        matchIndex + 350,
+                      );
+                      const extractedSnippet = responseBody.substring(
+                        startExtract,
+                        endExtract,
+                      );
+
+                      findings.push({
+                        file_path: `GraphQL Endpoint: ${url}`,
+                        vulnerability_name: `${rule.name} (Caught via GraphQL Response Payload)`,
+                        severity: rule.severity,
+                        code_snippet: `... ${extractedSnippet.trim()} ...`,
+                      });
+                    }
+                  }
+                }
+                // Block 2: Standard JSON/JS Bundles
+                else if (
+                  contentType.includes("javascript") ||
+                  contentType.includes("json") ||
+                  url.endsWith(".js") ||
+                  url.endsWith(".json")
+                ) {
+                  if (status < 200 || status >= 300) return;
+
+                  const bodyText = await response.text();
+
+                  for (const rule of WEB_SCAN_RULES) {
+                    rule.regex.lastIndex = 0;
+                    if (rule.regex.test(bodyText)) {
+                      const matchIndex = bodyText.search(rule.regex);
+                      const startExtract = Math.max(0, matchIndex - 150);
+                      const endExtract = Math.min(
+                        bodyText.length,
+                        matchIndex + 350,
+                      );
+                      const extractedSnippet = bodyText.substring(
+                        startExtract,
+                        endExtract,
+                      );
+
+                      findings.push({
+                        file_path: url,
+                        vulnerability_name: `${rule.name} (Caught via Network Bundle stream)`,
+                        severity: rule.severity,
+                        code_snippet: `... ${extractedSnippet.trim()} ...`,
+                      });
+                    }
+                  }
+
+                  // Block 3: AI Deep Scan Pipeline (Small Files Only)
+                  if (
+                    (contentType.includes("javascript") ||
+                      url.endsWith(".js")) &&
+                    status === 200
+                  ) {
+                    const contentLength = parseInt(
+                      response.headers()["content-length"] || "0",
+                      10,
+                    );
+
+                    // Only feed small files (under ~15KB) to the AI to prevent token limits
+                    if (contentLength > 0 && contentLength < 150000) {
+                      const smallScriptBody = await response.text();
+
+                      // Push the entire small script as a unique finding type
+                      findings.push({
+                        file_path: `Small Client Script: ${url}`,
+                        vulnerability_name:
+                          "AI Deep Source Code Analysis Trigger",
+                        severity: "Low", // This is just a trigger, the AI will determine true severity
+                        code_snippet: smallScriptBody, // Sending the whole small script
+                      });
+                    }
+                  }
+                }
+              } catch (respErr: any) {
+                // Passively ignore network processing timeouts
+              }
+            });
+
+            try {
+              const mainResponse = await page.goto(currentUrlToScan, {
+                waitUntil: "networkidle",
+                timeout: 12000, // 12 seconds
+              });
+
+              if (mainResponse) {
+                const headers = mainResponse.headers();
+
+                if (!headers["strict-transport-security"]) {
+                  findings.push({
+                    file_path: `HTTP Headers: ${currentUrlToScan}`,
+                    vulnerability_name:
+                      "Missing Strict-Transport-Security (HSTS) Header",
+                    severity: "Medium",
+                    code_snippet:
+                      "Strict-Transport-Security header is missing from the server response profile map.",
+                  });
+                }
+
+                if (!headers["content-security-policy"]) {
+                  findings.push({
+                    file_path: `HTTP Headers: ${currentUrlToScan}`,
+                    vulnerability_name:
+                      "Missing Content-Security-Policy (CSP) Header",
+                    severity: "High",
+                    code_snippet:
+                      "Content-Security-Policy header is missing, leaving application layout vulnerable.",
+                  });
+                } else {
+                  const cspValue = headers["content-security-policy"] || "";
+                  if (/unsafe-inline/i.test(cspValue)) {
+                    findings.push({
+                      file_path: `HTTP Headers: ${currentUrlToScan}`,
+                      vulnerability_name:
+                        "Permissive Content-Security-Policy: unsafe-inline allowed",
+                      severity: "High",
+                      code_snippet: `CSP directive contains 'unsafe-inline': ${cspValue.substring(0, 150)}`,
+                    });
+                  }
+                }
+
+                if (
+                  !headers["x-frame-options"] &&
+                  !headers["content-security-policy"]?.includes(
+                    "frame-ancestors",
+                  )
+                ) {
+                  findings.push({
+                    file_path: `HTTP Headers: ${currentUrlToScan}`,
+                    vulnerability_name:
+                      "Missing X-Frame-Options (Clickjacking Protection)",
+                    severity: "Medium",
+                    code_snippet:
+                      "X-Frame-Options header verification missing entirely.",
+                  });
+                }
+              }
+            } catch (navError: any) {
+              process.stderr.write(
+                `[SPIDER_WORKER_${workerId}] Networkidle failed, fallback DOM sweep: ${currentUrlToScan}\n`,
+              );
+              try {
+                await page.goto(currentUrlToScan, {
+                  waitUntil: "domcontentloaded",
+                  timeout: 8000,
+                });
+              } catch (fallbackError: any) {
+                await page.close();
+                continue; // Move to the finally block to decrement activeWorkers
+              }
+            }
+
+            const pageSessionCookies = await context.cookies();
+            for (const targetCookie of pageSessionCookies) {
+              if (!targetCookie.secure) {
                 findings.push({
-                  file_path: `HTTP Headers: ${currentUrlToScan}`,
-                  vulnerability_name:
-                    "Permissive Content-Security-Policy: unsafe-inline allowed",
-                  severity: "High",
-                  code_snippet: `CSP directive contains 'unsafe-inline', defeating XSS protection: ${cspValue.substring(0, 300)}`,
+                  file_path: `Cookie: ${targetCookie.name} on ${currentUrlToScan}`,
+                  vulnerability_name: "Insecure Cookie Flag",
+                  severity: "Medium",
+                  code_snippet: `Set-Cookie Flag validation missing: ${targetCookie.name}=***; Domain=${targetCookie.domain}`,
                 });
               }
-              if (/unsafe-eval/i.test(cspValue)) {
-                findings.push({
-                  file_path: `HTTP Headers: ${currentUrlToScan}`,
-                  vulnerability_name:
-                    "Permissive Content-Security-Policy: unsafe-eval allowed",
-                  severity: "High",
-                  code_snippet: `CSP directive contains 'unsafe-eval', permitting eval()-class sinks: ${cspValue.substring(0, 300)}`,
-                });
+            }
+
+            // DEEP SPA INTERACTION (Clicking buttons to trigger React state changes)
+            try {
+              const clickables = await page
+                .locator('button, [role="button"]')
+                .all();
+              const maxClicks = Math.min(clickables.length, 3);
+              for (let i = 0; i < maxClicks; i++) {
+                // FIXED TypeScript Array Access (assigned to constant first)
+                const element = clickables[i];
+                if (element) {
+                  await element.click({ timeout: 2000 }).catch(() => {});
+                  await page.waitForTimeout(300);
+                }
               }
-              // Wildcard in script-src / default-src is effectively no CSP
-              if (
-                /(?:^|;)\s*(?:default|script)-src[^;]*\*/i.test(cspValue) &&
-                !/'(?:strict-dynamic|nonce-|sha256-|sha384-|sha512-)/i.test(
-                  cspValue,
+            } catch (e) {}
+
+            // ADVANCED INPUT FUZZING (XSS, SQLi, NoSQLi)
+            try {
+              const inputs = await page
+                .locator(
+                  'input[type="text"], input[type="search"], textarea, input[type="email"]',
                 )
+                .all();
+
+              const maxInputs = Math.min(inputs.length, 3);
+              for (let i = 0; i < maxInputs; i++) {
+                const inputElement = inputs[i];
+                // FIXED TypeScript Array Access
+                if (
+                  inputElement &&
+                  (await inputElement.isVisible().catch(() => false))
+                ) {
+                  for (const payload of FUZZ_PAYLOADS) {
+                    await inputElement.fill(payload).catch(() => {});
+                    await inputElement.press("Enter").catch(() => {});
+                    await page.waitForTimeout(500); // Give SPA a moment to react
+
+                    const domContent = await page.content().catch(() => "");
+                    if (domContent.includes(payload)) {
+                      findings.push({
+                        file_path: currentUrlToScan,
+                        vulnerability_name: `Input Reflection / Potential Injection Vulnerability`,
+                        severity: "Critical",
+                        code_snippet: `Application unsafely reflected or executed test payload: ${payload}`,
+                      });
+                    }
+                  }
+                }
+              }
+            } catch (fuzzErr) {}
+
+            // DOM & FRAMEWORK STATE EXTRACTION
+            const frameExtractionResults = await page.evaluate(() => {
+              const docGlobal = (globalThis as any).document;
+              const locStorageGlobal = (globalThis as any).localStorage;
+
+              const memoryObjectDump: Record<string, string> = {};
+              const frameworkStateDump: string[] = [];
+
+              if (locStorageGlobal) {
+                for (let i = 0; i < locStorageGlobal.length; i++) {
+                  const key = locStorageGlobal.key(i);
+                  if (key)
+                    memoryObjectDump[`localStorage: ${key}`] =
+                      locStorageGlobal.getItem(key) || "";
+                }
+              }
+
+              const nextData = (globalThis as any).__NEXT_DATA__;
+              if (nextData)
+                frameworkStateDump.push(
+                  `Next.js State Dump: ${JSON.stringify(nextData)}`,
+                );
+
+              let extractedLinks: string[] = [];
+              if (docGlobal) {
+                extractedLinks = Array.from(
+                  docGlobal.querySelectorAll("a[href]"),
+                )
+                  .map((anchor: any) => anchor.href)
+                  .filter((hrefStr: string) => hrefStr.trim().length > 0);
+              }
+
+              return {
+                storage: memoryObjectDump,
+                frameworkStates: frameworkStateDump,
+                discoveredLinks: extractedLinks,
+              };
+            });
+
+            // Evaluate Web Storage
+            for (const [
+              keyStoreMapName,
+              valueStoreMapContext,
+            ] of Object.entries(frameExtractionResults.storage)) {
+              if (
+                /token|jwt|auth|secret/i.test(keyStoreMapName) &&
+                valueStoreMapContext.length > 20
               ) {
                 findings.push({
-                  file_path: `HTTP Headers: ${currentUrlToScan}`,
-                  vulnerability_name:
-                    "Permissive Content-Security-Policy: wildcard script source",
+                  file_path: `Web Storage API [${currentUrlToScan}]`,
+                  vulnerability_name: "Sensitive Authentication Data Leakage",
                   severity: "High",
-                  code_snippet: `CSP allows scripts from arbitrary origins (* in default-src/script-src): ${cspValue.substring(0, 300)}`,
+                  code_snippet: `${keyStoreMapName} = "${valueStoreMapContext.substring(0, 50)}..."`,
                 });
               }
-            }
-
-            if (
-              !headers["x-frame-options"] &&
-              !headers["content-security-policy"]?.includes("frame-ancestors")
-            ) {
-              findings.push({
-                file_path: `HTTP Headers: ${currentUrlToScan}`,
-                vulnerability_name:
-                  "Missing X-Frame-Options (Clickjacking Protection)",
-                severity: "Medium",
-                code_snippet:
-                  "X-Frame-Options header verification missing entirely from engine headers check metadata collection mapping.",
-              });
-            }
-          }
-        } catch (navError: any) {
-          process.stderr.write(
-            `[SPIDER_NAV_TIMEOUT] Hard networkidle failed on link routing, fallback to active DOM rendering sweep execution: ${currentUrlToScan}\n`,
-          );
-          try {
-            await page.goto(currentUrlToScan, {
-              waitUntil: "domcontentloaded",
-              timeout: 8000,
-            });
-          } catch (fallbackError: any) {
-            process.stderr.write(
-              `[SPIDER_PAGE_SKIP] Target route unavailable entirely under strict limits: ${currentUrlToScan}\n`,
-            );
-            continue;
-          }
-        }
-
-        process.stdout.write(
-          `[WEB_SCAN_COOKIES] Dumping state variables for page path location context details...\n`,
-        );
-        const pageSessionCookies = await context.cookies();
-        for (const targetCookie of pageSessionCookies) {
-          if (!targetCookie.secure) {
-            findings.push({
-              file_path: `Cookie context path tracing name: ${targetCookie.name} on ${currentUrlToScan}`,
-              vulnerability_name:
-                "Insecure Cookie Flag (Missing Secure Configuration Check)",
-              severity: "Medium",
-              code_snippet: `Set-Cookie Flag signature verification missing securely: ${targetCookie.name}=${targetCookie.value.substring(0, 8)}...; Domain=${targetCookie.domain}`,
-            });
-          }
-          if (
-            !targetCookie.httpOnly &&
-            (targetCookie.name.toLowerCase().includes("session") ||
-              targetCookie.name.toLowerCase().includes("token"))
-          ) {
-            findings.push({
-              file_path: `Cookie context path tracing name: ${targetCookie.name} on ${currentUrlToScan}`,
-              vulnerability_name:
-                "Sensitive Cookie Missing HttpOnly Protection Flag Enforcement",
-              severity: "High",
-              code_snippet: `Set-Cookie script interception variable exposed: ${targetCookie.name}=${targetCookie.value.substring(0, 8)}...; Domain=${targetCookie.domain}`,
-            });
-          }
-        }
-
-        // DEEP SPA INTERACTION (Clicking buttons to trigger React state changes)
-        process.stdout.write(
-          `[WEB_SCAN_INTERACTION] Probing interactive DOM nodes for Single Page Application state triggers...\n`,
-        );
-        try {
-          const clickables = await page
-            .locator('button, [role="button"]')
-            .all();
-          // Limit to 3 clicks per page to prevent scanning from taking forever
-          const maxClicks = Math.min(clickables.length, 3);
-
-          for (let i = 0; i < maxClicks; i++) {
-            const element = clickables[i];
-            if (element) {
-              // We click and wait passively. If it triggers an XHR/GraphQL request, the network interceptor above catches it!
-              await element.click({ timeout: 2000 }).catch(() => {});
-              await page.waitForTimeout(500); // Give React half a second to mutate state or fire requests
-            }
-          }
-        } catch (interactionErr: any) {
-          process.stderr.write(
-            `[INTERACTION_SKIP] Minor failure interacting with DOM element nodes: ${interactionErr.message}\n`,
-          );
-        }
-
-        // MASSIVE DOM & FRAMEWORK STATE EXTRACTION
-        process.stdout.write(
-          `[WEB_SCAN_DOM_SPIDER] Extracting deep links, web-storage, and React/Next/Vue internal state maps...\n`,
-        );
-        const frameExtractionResults = await page.evaluate(() => {
-          const docGlobal = (globalThis as any).document;
-          const locStorageGlobal = (globalThis as any).localStorage;
-          const sessStorageGlobal = (globalThis as any).sessionStorage;
-
-          const memoryObjectDump: Record<string, string> = {};
-          const frameworkStateDump: string[] = [];
-
-          // 1. Storage API Sweeps
-          if (locStorageGlobal) {
-            for (let i = 0; i < locStorageGlobal.length; i++) {
-              const currentStoreKeyName = locStorageGlobal.key(i);
-              if (currentStoreKeyName) {
-                memoryObjectDump[`localStorage: ${currentStoreKeyName}`] =
-                  locStorageGlobal.getItem(currentStoreKeyName) || "";
+              for (const rule of WEB_SCAN_RULES) {
+                rule.regex.lastIndex = 0;
+                if (rule.regex.test(valueStoreMapContext)) {
+                  findings.push({
+                    file_path: `Storage API [${currentUrlToScan}]`,
+                    vulnerability_name: `${rule.name}`,
+                    severity: rule.severity,
+                    code_snippet: `${keyStoreMapName} matches sensitive profile signature.`,
+                  });
+                }
               }
             }
-          }
 
-          if (sessStorageGlobal) {
-            for (let i = 0; i < sessStorageGlobal.length; i++) {
-              const currentStoreKeyName = sessStorageGlobal.key(i);
-              if (currentStoreKeyName) {
-                memoryObjectDump[`sessionStorage: ${currentStoreKeyName}`] =
-                  sessStorageGlobal.getItem(currentStoreKeyName) || "";
+            // Evaluate Framework State Dumps (Next.js / Redux)
+            for (const stateDump of frameExtractionResults.frameworkStates) {
+              for (const rule of WEB_SCAN_RULES) {
+                rule.regex.lastIndex = 0;
+                if (rule.regex.test(stateDump)) {
+                  findings.push({
+                    file_path: `Framework Hydration State [${currentUrlToScan}]`,
+                    vulnerability_name: `${rule.name} (Leaked via Framework payload)`,
+                    severity: rule.severity,
+                    code_snippet: `[Object State Dump Matched Signature]`,
+                  });
+                }
               }
             }
-          }
 
-          // 2. Framework-Specific Hidden State Sweeps (Next.js, Redux, Nuxt)
-          const nextData = (globalThis as any).__NEXT_DATA__;
-          if (nextData) {
-            frameworkStateDump.push(
-              `Next.js State Dump: ${JSON.stringify(nextData)}`,
-            );
-          }
+            // HEURISTIC QUEUE ROUTING for newly discovered links
+            for (const linkHref of frameExtractionResults.discoveredLinks) {
+              try {
+                const urlInstance = new URL(linkHref, originTargetRootString);
+                if (urlInstance.origin === originTargetRootString) {
+                  const cleanLink = urlInstance.href.split("#")[0]!;
 
-          const reduxStore =
-            (globalThis as any).__REDUX_STATE__ || (globalThis as any).store;
-          if (reduxStore) {
-            frameworkStateDump.push(
-              `Redux Global Store Dump: ${JSON.stringify(reduxStore)}`,
-            );
-          }
-
-          const nuxtData = (globalThis as any).__NUXT__;
-          if (nuxtData) {
-            frameworkStateDump.push(
-              `Nuxt.js State Dump: ${JSON.stringify(nuxtData)}`,
-            );
-          }
-
-          // 3. Inline Script Sweeps
-          let collectedBaseInlineScriptsContent = "";
-          if (docGlobal) {
-            collectedBaseInlineScriptsContent = Array.from(
-              docGlobal.querySelectorAll("script:not([src])"),
-            )
-              .map((elemNodeItem: any) => elemNodeItem.textContent || "")
-              .join("\n");
-          }
-
-          // 4. Anchor Link Sweeps for the Crawl Queue
-          let extractedAnchorHrefLinksArray: string[] = [];
-          if (docGlobal) {
-            extractedAnchorHrefLinksArray = Array.from(
-              docGlobal.querySelectorAll("a[href]"),
-            )
-              .map((anchorItemNode: any) => anchorItemNode.href)
-              .filter((hrefStrItem: string) => hrefStrItem.trim().length > 0);
-          }
-
-          return {
-            storage: memoryObjectDump,
-            frameworkStates: frameworkStateDump,
-            inlineScripts: collectedBaseInlineScriptsContent,
-            discoveredLinks: extractedAnchorHrefLinksArray,
-          };
-        });
-
-        // Evaluate Web Storage
-        for (const [keyStoreMapName, valueStoreMapContext] of Object.entries(
-          frameExtractionResults.storage,
-        )) {
-          if (
-            /token|jwt|auth|secret/i.test(keyStoreMapName) &&
-            valueStoreMapContext.length > 20
-          ) {
-            findings.push({
-              file_path: `Browser Web Storage API [Scanned route location: ${currentUrlToScan}]`,
-              vulnerability_name:
-                "Sensitive Authentication Data in Web Storage (XSS Token Leakage Risk Mapping)",
-              severity: "High",
-              code_snippet: `${keyStoreMapName} = "${valueStoreMapContext.substring(0, 50)}..."`,
-            });
-          }
-
-          for (const rule of WEB_SCAN_RULES) {
-            rule.regex.lastIndex = 0;
-            if (rule.regex.test(valueStoreMapContext)) {
-              findings.push({
-                file_path: `Browser Storage Session Variable Runtime Profile Map [Target: ${currentUrlToScan}]`,
-                vulnerability_name: `${rule.name} (Exposed context tracked in variable property name: ${keyStoreMapName})`,
-                severity: rule.severity,
-                code_snippet: `${keyStoreMapName} = "${valueStoreMapContext.substring(0, 100)}..."`,
-              });
+                  if (
+                    !visitedUrls.has(cleanLink) &&
+                    !priorityQueue.includes(cleanLink) &&
+                    !standardQueue.includes(cleanLink)
+                  ) {
+                    // Determine priority based on heuristic keywords
+                    const isHighPriority = HIGH_PRIORITY_TERMS.some((term) =>
+                      cleanLink.toLowerCase().includes(term),
+                    );
+                    if (isHighPriority) {
+                      priorityQueue.push(cleanLink);
+                    } else {
+                      standardQueue.push(cleanLink);
+                    }
+                  }
+                }
+              } catch (e) {}
             }
+
+            await page.close();
+          } finally {
+            // No matter what happens (success or crash), we must signal that the worker is done with the page
+            activeWorkers--;
           }
         }
+      };
 
-        // Evaluate Framework State Dumps (Next.js / Redux)
-        for (const stateDump of frameExtractionResults.frameworkStates) {
-          for (const rule of WEB_SCAN_RULES) {
-            rule.regex.lastIndex = 0;
-            if (rule.regex.test(stateDump)) {
-              findings.push({
-                file_path: `Hidden Framework Hydration State (Next.js/React) [Target: ${currentUrlToScan}]`,
-                vulnerability_name: `${rule.name} (Leaked strictly via Framework hydration window objects)`,
-                severity: rule.severity,
-                code_snippet: `[Object State Dump Matched Signature]`,
-              });
-            }
-          }
-        }
-
-        // Evaluate Inline Scripts
-        if (frameExtractionResults.inlineScripts.trim().length > 0) {
-          for (const rule of WEB_SCAN_RULES) {
-            rule.regex.lastIndex = 0;
-            if (rule.regex.test(frameExtractionResults.inlineScripts)) {
-              findings.push({
-                file_path: `${currentUrlToScan} (Inline Dynamic Script Payload Node)`,
-                vulnerability_name: `${rule.name} (Embedded in HTML Base)`,
-                severity: rule.severity,
-                code_snippet:
-                  "[Inline Script Context Block Content Traced Match]",
-              });
-            }
-          }
-        }
-
-        // Push new links to the Crawl Queue
-        for (const linkHrefTargetElement of frameExtractionResults.discoveredLinks) {
-          try {
-            const tempValidatedUrlInstance = new URL(
-              linkHrefTargetElement,
-              originTargetRootString,
-            );
-
-            if (tempValidatedUrlInstance.origin === originTargetRootString) {
-              const fullyCleanedTargetLinkString =
-                tempValidatedUrlInstance.href.split("#")[0]!;
-
-              if (
-                !visitedUrls.has(fullyCleanedTargetLinkString) &&
-                !crawlQueue.includes(fullyCleanedTargetLinkString)
-              ) {
-                crawlQueue.push(fullyCleanedTargetLinkString);
-              }
-            }
-          } catch (e: any) {
-            // Passive escape for mailto or invalid relative routing handles inside DOM structures
-          }
-        }
+      // Launch the concurrent worker pool
+      const workerPromises = [];
+      for (let i = 1; i <= MAX_CONCURRENT_WORKERS; i++) {
+        workerPromises.push(workerProcess(i));
       }
+
+      // Wait for all 3 workers to gracefully complete the queues
+      await Promise.all(workerPromises);
     } catch (err: any) {
       process.stderr.write(
         `[WEB_SCAN_CRASH] Engine system loop execution failure detail notation: ${err.message}\n`,
@@ -621,13 +632,14 @@ export const webScannerService = {
       await browser.close();
     }
 
-    // Dedupe: the same secret commonly appears in multiple JS bundles, localStorage, and __NEXT_DATA__
-    // simultaneously. Sending each as a separate AI finding wastes tokens. Key by name + first 40 chars
-    // of the snippet so identical leaks across surfaces collapse into one finding.
+    // Dedupe
     const dedupedFindings: WebScanFinding[] = [];
     const seenFindingKeys = new Set<string>();
+
     for (const f of findings) {
-      const dedupKey = `${f.vulnerability_name}|${f.code_snippet.substring(0, 40)}`;
+      // Re-added file_path to the dedup key to ensure we don't accidentally drop
+      // identical header vulnerabilities across multiple different pages.
+      const dedupKey = `${f.vulnerability_name}|${f.file_path}|${f.code_snippet.substring(0, 40)}`;
       if (seenFindingKeys.has(dedupKey)) continue;
       seenFindingKeys.add(dedupKey);
       dedupedFindings.push(f);
