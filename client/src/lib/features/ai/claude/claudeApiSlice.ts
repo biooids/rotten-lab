@@ -58,6 +58,15 @@ export const claudeApiSlice = createApi({
         { type: "ClaudeScan", id: arg.reportId },
       ],
     }),
+
+    // NEW: Download PDF endpoint configured to handle binary Blobs instead of JSON
+    downloadClaudeReportPdf: builder.mutation<Blob, string>({
+      query: (reportId) => ({
+        url: `/ai/claude/report/${reportId}/pdf`,
+        method: "GET",
+        responseHandler: (response) => response.blob(),
+      }),
+    }),
   }),
 });
 
@@ -66,4 +75,5 @@ export const {
   useClaudeScanRepoMutation,
   useGetClaudeHistoryQuery,
   useGetClaudeReportQuery,
+  useDownloadClaudeReportPdfMutation,
 } = claudeApiSlice;

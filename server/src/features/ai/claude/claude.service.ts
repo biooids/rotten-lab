@@ -1,8 +1,8 @@
 //src/features/ai/claude/claude.service.ts
 import Anthropic from "@anthropic-ai/sdk";
 import { pool } from "../../../db/psql.js";
-import { gitScannerService } from "../../core-scanners/gitScanner.service.js";
-import { webScannerService } from "../../core-scanners/webScanner.service.js";
+import { gitScannerService } from "../../ai/core-scanners/gitScanner.service.js";
+import { webScannerService } from "../../ai/core-scanners/webScanner.service.js";
 import type {
   ClaudeModelId,
   DatabaseScanReport,

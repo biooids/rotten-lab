@@ -1,8 +1,8 @@
 //src/features/ai/gemini/gemini.service.ts
 import { GoogleGenAI, Type } from "@google/genai";
 import { pool } from "../../../db/psql.js";
-import { gitScannerService } from "../../core-scanners/gitScanner.service.js";
-import { webScannerService } from "../../core-scanners/webScanner.service.js";
+import { gitScannerService } from "../../ai/core-scanners/gitScanner.service.js";
+import { webScannerService } from "../../ai/core-scanners/webScanner.service.js";
 import type {
   GeminiModelId,
   DatabaseScanReport,
@@ -266,7 +266,9 @@ export const geminiService = {
       // can debug prompts, and write a SPECIFIC engine_warning so the user can retry.
       let aiResultsArray: BulkGeminiFindingResponse[];
       try {
-        aiResultsArray = JSON.parse(response.text) as BulkGeminiFindingResponse[];
+        aiResultsArray = JSON.parse(
+          response.text,
+        ) as BulkGeminiFindingResponse[];
       } catch (parseErr: any) {
         process.stderr.write(
           `[GEMINI_RESPONSE_PARSE_FAIL] reportId=${reportId} provider=gemini model=${model} | ${parseErr?.constructor?.name || "SyntaxError"}: ${parseErr?.message}\n` +
@@ -409,10 +411,7 @@ export const geminiService = {
         category = "QUOTA_EXCEEDED";
         userFacingHint =
           "Gemini quota or rate limit exceeded on this API key. If you're on the free tier you've hit your daily cap — wait until tomorrow or switch to Claude.";
-      } else if (
-        httpStatus === 400 ||
-        googleStatus === "INVALID_ARGUMENT"
-      ) {
+      } else if (httpStatus === 400 || googleStatus === "INVALID_ARGUMENT") {
         category = "BAD_REQUEST";
         userFacingHint = `Google rejected the request as malformed: ${aiErr?.message?.substring(0, 200) || "no detail"}. This is usually a server bug — please report it.`;
       } else if (typeof httpStatus === "number" && httpStatus >= 500) {

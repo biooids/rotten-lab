@@ -56,6 +56,15 @@ export const geminiApiSlice = createApi({
         { type: "GeminiScan", id: arg.reportId },
       ],
     }),
+
+    // NEW: Download PDF endpoint configured to handle binary Blobs instead of JSON
+    downloadGeminiReportPdf: builder.mutation<Blob, string>({
+      query: (reportId) => ({
+        url: `/ai/gemini/report/${reportId}/pdf`,
+        method: "GET",
+        responseHandler: (response) => response.blob(),
+      }),
+    }),
   }),
 });
 
@@ -64,4 +73,5 @@ export const {
   useScanRepoMutation,
   useGetHistoryQuery,
   useGetReportQuery,
+  useDownloadGeminiReportPdfMutation,
 } = geminiApiSlice;

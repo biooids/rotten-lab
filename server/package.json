@@ -22,6 +22,7 @@
     "busboy": "^1.6.0",
     "cloudinary": "^2.10.0",
     "jsonwebtoken": "^9.0.3",
+    "pdfkit": "^0.18.0",
     "pg": "^8.20.0",
     "playwright": "^1.60.0",
     "redis": "^5.12.1"
@@ -30,6 +31,7 @@
     "@types/busboy": "^1.5.4",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^25.6.0",
+    "@types/pdfkit": "^0.17.6",
     "@types/pg": "^8.20.0",
     "dotenv-cli": "^11.0.0",
     "tsc-alias": "^1.8.17",

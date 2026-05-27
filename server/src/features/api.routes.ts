@@ -7,6 +7,7 @@ import { adminRoutes } from "./admin/admin.routes.js";
 import { postsRoutes } from "./posts/posts.routes.js";
 import { geminiRoutes } from "./ai/gemini/gemini.routes.js";
 import { claudeRoutes } from "./ai/claude/claude.routes.js";
+import { reportsRoutes } from "./ai/reports/reports.routes.js";
 
 export const apiRoutes = async ({
   req,
@@ -67,5 +68,9 @@ export const apiRoutes = async ({
   if (geminiHandled) return true;
   const claudeHandled = await claudeRoutes({ req, res, pathname });
   if (claudeHandled) return true;
+
+  const reportsHandled = await reportsRoutes({ req, res, pathname });
+  if (reportsHandled) return true;
+
   return false;
 };
