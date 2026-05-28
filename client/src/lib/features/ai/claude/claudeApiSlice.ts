@@ -15,7 +15,6 @@ export const claudeApiSlice = createApi({
   baseQuery: baseQueryWithReauth,
   tagTypes: ["ClaudeScan", "ClaudeHistory"],
   endpoints: (builder) => ({
-    // Namespaced to "claudeScanUrl" to prevent hook collision in your components
     claudeScanUrl: builder.mutation<InitScanResponse, ScanRequestDTO>({
       query: (scanData) => ({
         url: "/ai/claude/scan-url",
@@ -59,10 +58,10 @@ export const claudeApiSlice = createApi({
       ],
     }),
 
-    // NEW: Download PDF endpoint configured to handle binary Blobs instead of JSON
+    // FIXED: Now points directly to the dedicated reports service instead of the AI router
     downloadClaudeReportPdf: builder.mutation<Blob, string>({
       query: (reportId) => ({
-        url: `/ai/claude/report/${reportId}/pdf`,
+        url: `/reports/${reportId}/pdf`,
         method: "GET",
         responseHandler: (response) => response.blob(),
       }),

@@ -1,13 +1,19 @@
-//src/components/pages/aiLab/ReportDetails.tsx
 "use client";
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { useGetReportQuery } from "@/lib/features/ai/gemini/geminiApiSlice";
-import { useGetClaudeReportQuery } from "@/lib/features/ai/claude/claudeApiSlice";
+import {
+  useGetReportQuery,
+  useDownloadGeminiReportPdfMutation,
+} from "@/lib/features/ai/gemini/geminiApiSlice";
+import {
+  useGetClaudeReportQuery,
+  useDownloadClaudeReportPdfMutation,
+} from "@/lib/features/ai/claude/claudeApiSlice";
+import { triggerFileDownload } from "@/lib/features/ai/downloadHelper";
 import CornerFlourish from "@/components/shared/CornerFlourish";
 import VulnerabilityCard from "./VulnerabilityCard";
-import FunFactLoader from "@/components/shared/FunFactLoader"; // <--- NEW IMPORT
+import FunFactLoader from "@/components/shared/FunFactLoader";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
@@ -23,9 +29,18 @@ export default function ReportDetails({
   const [pollInterval, setPollInterval] = useState<number>(3000);
   const [page, setPage] = useState(1);
 
-  // RTK Query hooks must always be called at the top level.
-  // We use the `skip` parameter to completely bypass the hook that doesn't match the current engine.
-  // Also expose `error` so we can show polling-network-failure UI instead of hanging on "Scan in progress".
+  // --- NEW: Local UI state for the download status ---
+  const [downloadStatus, setDownloadStatus] = useState<
+    "idle" | "success" | "error"
+  >("idle");
+  const [downloadErrorMsg, setDownloadErrorMsg] = useState("");
+
+  const [downloadGeminiPdf, { isLoading: isGeminiPdfLoading }] =
+    useDownloadGeminiReportPdfMutation();
+  const [downloadClaudePdf, { isLoading: isClaudePdfLoading }] =
+    useDownloadClaudeReportPdfMutation();
+  const isPdfLoading = isGeminiPdfLoading || isClaudePdfLoading;
+
   const {
     data: geminiData,
     isFetching: isGeminiFetching,
@@ -50,7 +65,6 @@ export default function ReportDetails({
     },
   );
 
-  // Dynamically assign the active data and fetching states based on the engine
   const reportData = engine === "claude" ? claudeData : geminiData;
   const isFetching = engine === "claude" ? isClaudeFetching : isGeminiFetching;
   const pollingError = engine === "claude" ? claudeError : geminiError;
@@ -64,7 +78,6 @@ export default function ReportDetails({
     activeReport?.status === "processing" ||
     (isFetching && !activeReport && !pollingError);
 
-  // Stop polling automatically when the job finishes or crashes
   useEffect(() => {
     if (activeReport) {
       if (
@@ -76,13 +89,55 @@ export default function ReportDetails({
     }
   }, [activeReport]);
 
-  // Also stop polling if the poll itself starts erroring out (network drop, 500 from the
-  // server). Without this we'd hammer the broken endpoint every 3 seconds forever.
   useEffect(() => {
     if (pollingError) {
       setPollInterval(0);
     }
   }, [pollingError]);
+
+  // --- UPDATED: PDF Download Handler (No more alerts, handles backend JSON errors) ---
+  const handleDownloadPdf = async () => {
+    setDownloadStatus("idle");
+    setDownloadErrorMsg("");
+
+    try {
+      let blob: Blob;
+      if (engine === "claude") {
+        blob = await downloadClaudePdf(reportId).unwrap();
+      } else {
+        blob = await downloadGeminiPdf(reportId).unwrap();
+      }
+
+      // If the backend threw a 400 Error, the responseHandler converted that JSON into a Blob.
+      // We check if it's JSON to extract the actual error message instead of saving a broken PDF.
+      if (blob.type === "application/json") {
+        const text = await blob.text();
+        const json = JSON.parse(text);
+        throw new Error(
+          json.error ||
+            json.message ||
+            "The server rejected the PDF generation request.",
+        );
+      }
+
+      triggerFileDownload(blob, `${engine}_audit_${reportId}.pdf`);
+
+      setDownloadStatus("success");
+      // Hide the success message after 5 seconds
+      setTimeout(() => setDownloadStatus("idle"), 5000);
+    } catch (error: any) {
+      console.error("Failed to download PDF:", error);
+      setDownloadStatus("error");
+
+      // Fallbacks for standard fetch/RTK errors vs our custom JSON error above
+      const extractedMessage =
+        error?.message ||
+        error?.data?.error ||
+        error?.data?.message ||
+        "An unknown error occurred while downloading.";
+      setDownloadErrorMsg(extractedMessage);
+    }
+  };
 
   if (!activeReport && !isFetching && !isScanRunning) {
     return (
@@ -153,8 +208,6 @@ export default function ReportDetails({
           </div>
         </div>
 
-        {/* POLLING-ERROR UI: network drop, 500 from /report endpoint, etc.
-            Without this the UI would sit on "Scan in progress..." forever. */}
         {pollingError && (
           <div className="border-3 border-double border-destructive p-4 bg-destructive/10 flex flex-col gap-2 mt-2">
             <span className="text-xs font-bold text-destructive uppercase">
@@ -184,7 +237,6 @@ export default function ReportDetails({
           </div>
         )}
 
-        {/* POLLING STATE UI - REPLACED WITH NEW COMPONENT */}
         {isScanRunning && (
           <FunFactLoader
             engine={engine}
@@ -192,19 +244,43 @@ export default function ReportDetails({
           />
         )}
 
-        {/* COMPLETED STATE UI */}
         {!isScanRunning && activeReport?.status === "completed" && (
           <div className="flex flex-col gap-6 pt-2">
             <div className="text-xs font-bold p-4 border-3 border-double bg-background flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center">
               <span className="truncate w-full sm:w-[70%]">
                 Target: {activeReport.target_url}
               </span>
-              <span className="whitespace-nowrap bg-primary text-primary-foreground px-2 py-1 border-3 border-double">
-                Anomalies Found: {meta?.totalItems || activeFindings.length}
-              </span>
+
+              <div className="flex flex-col gap-2 items-end">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="whitespace-nowrap bg-primary text-primary-foreground px-2 py-1 border-3 border-double">
+                    Anomalies Found: {meta?.totalItems || activeFindings.length}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleDownloadPdf}
+                    disabled={isPdfLoading}
+                    className="whitespace-nowrap border-3 border-double px-3 py-1 hover:bg-primary hover:text-primary-foreground disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-foreground transition-colors cursor-pointer"
+                  >
+                    {isPdfLoading ? "[ DOWNLOADING... ]" : "[ DOWNLOAD PDF ]"}
+                  </button>
+                </div>
+
+                {/* --- NEW: DOWNLOAD STATUS UI --- */}
+                {downloadStatus === "success" && (
+                  <div className="text-[10px] font-bold border-3 border-double border-primary text-primary bg-primary/10 px-2 py-1">
+                    [ SUCCESS ] PDF downloaded securely.
+                  </div>
+                )}
+                {downloadStatus === "error" && (
+                  <div className="text-[10px] font-bold border-3 border-double border-destructive text-destructive bg-destructive/10 px-2 py-1 flex flex-col text-right">
+                    <span>[ FAILED ] Could not download PDF.</span>
+                    <span className="opacity-80">{downloadErrorMsg}</span>
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* PARTIAL-SUCCESS WARNINGS: scan completed but the engine recorded non-fatal issues */}
             {activeReport.engine_warnings &&
               activeReport.engine_warnings.length > 0 && (
                 <div className="border-3 border-double border-yellow-500 p-4 bg-yellow-500/10 flex flex-col gap-2">
@@ -234,7 +310,6 @@ export default function ReportDetails({
                   ))}
                 </div>
 
-                {/* PAGINATION CONTROLS FOR FINDINGS */}
                 {meta && meta.totalPages > 1 && (
                   <div className="flex items-center justify-between border-t-3 border-double pt-4 mt-2">
                     <button
@@ -263,7 +338,6 @@ export default function ReportDetails({
           </div>
         )}
 
-        {/* FAILED STATE UI */}
         {!isScanRunning && activeReport?.status === "failed" && (
           <div className="border-3 border-double border-destructive p-4 bg-destructive/10 flex flex-col gap-3 mt-2">
             <span className="text-xs font-bold text-destructive">

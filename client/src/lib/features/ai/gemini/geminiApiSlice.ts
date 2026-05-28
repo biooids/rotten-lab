@@ -1,4 +1,3 @@
-//src/lib/features/ai/gemini/geminiApiSlice.ts
 import { createApi } from "@reduxjs/toolkit/query/react";
 import {
   ScanRequestDTO,
@@ -33,7 +32,6 @@ export const geminiApiSlice = createApi({
       invalidatesTags: ["GeminiHistory"],
     }),
 
-    // UPDATED to accept params and build query string
     getHistory: builder.query<ScanHistoryResponse, HistoryQueryParams | void>({
       query: (params) => {
         if (!params) return "/ai/gemini/history";
@@ -48,7 +46,6 @@ export const geminiApiSlice = createApi({
       providesTags: ["GeminiHistory"],
     }),
 
-    // UPDATED to accept object for pagination
     getReport: builder.query<ScanResponse, ReportQueryParams>({
       query: ({ reportId, page = 1, limit = 10 }) =>
         `/ai/gemini/report/${reportId}?page=${page}&limit=${limit}`,
@@ -57,10 +54,10 @@ export const geminiApiSlice = createApi({
       ],
     }),
 
-    // NEW: Download PDF endpoint configured to handle binary Blobs instead of JSON
+    // FIXED: Now points directly to the dedicated reports service instead of the AI router
     downloadGeminiReportPdf: builder.mutation<Blob, string>({
       query: (reportId) => ({
-        url: `/ai/gemini/report/${reportId}/pdf`,
+        url: `/reports/${reportId}/pdf`,
         method: "GET",
         responseHandler: (response) => response.blob(),
       }),

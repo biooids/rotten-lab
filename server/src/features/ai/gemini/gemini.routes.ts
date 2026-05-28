@@ -44,6 +44,10 @@ export const geminiRoutes = async ({
     const uuidRegex =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(reportId)) {
+      // FIXED: Added missing server log so you can see why it failed
+      process.stderr.write(
+        `[HTTP_REJECT] Invalid Report ID format in Gemini Router: ${reportId}\n`,
+      );
       res.setHeader("Content-Type", "application/json");
       res.statusCode = 400;
       res.end(JSON.stringify({ error: "Invalid report ID format requested." }));
