@@ -20,8 +20,7 @@ export const GEMINI_MODEL_CATALOG: readonly GeminiModelInfo[] = [
     id: "gemini-2.5-flash",
     label: "Flash 2.5",
     tagline: "Free-tier default",
-    strengths:
-      "Fast & cheap. Solid for most scans on the free tier.",
+    strengths: "Fast & cheap. Solid for most scans on the free tier.",
     tradeoff: "Less depth on complex multi-step reasoning.",
   },
   {
@@ -36,8 +35,7 @@ export const GEMINI_MODEL_CATALOG: readonly GeminiModelInfo[] = [
     id: "gemini-2.5-flash-lite",
     label: "Flash-Lite 2.5",
     tagline: "Cheapest & fastest",
-    strengths:
-      "Snap analyses on small repos and quick web sweeps.",
+    strengths: "Snap analyses on small repos and quick web sweeps.",
     tradeoff: "Most aggressive trade-off on depth.",
   },
 ] as const;
@@ -81,7 +79,7 @@ export interface InitScanResponse {
   reportId: string;
 }
 
-// --- NEW META AND PARAM TYPES FOR PAGINATION ---
+// --- META AND PARAM TYPES FOR PAGINATION ---
 export interface PaginationMeta {
   currentPage: number;
   totalPages: number;
@@ -108,12 +106,34 @@ export interface ScanResponse {
   data: {
     report: ScanReport;
     findings: GeminiFinding[];
-    meta: PaginationMeta | null; // Added meta
+    meta: PaginationMeta | null;
   };
 }
 
 export interface ScanHistoryResponse {
   message: string;
   data: ScanReport[];
-  meta?: PaginationMeta; // Added meta
+  meta?: PaginationMeta;
+}
+
+// --- NEW CHAT SYSTEM TYPES ---
+export type ChatRole = "user" | "ai";
+
+export interface ReportChatSession {
+  id: string;
+  report_id: string;
+  user_id: string;
+  role: ChatRole;
+  message: string;
+  created_at: string;
+}
+
+export interface ChatMessageRequestDTO {
+  message: string;
+  findingId?: string;
+  selectedModel?: string;
+}
+
+export interface ChatHistoryResponse {
+  history: ReportChatSession[];
 }

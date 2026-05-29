@@ -1,4 +1,4 @@
-// src/features/ai/reports/reports.routes.ts
+//src/features/ai/reports/reports.routes.ts
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { reportsController } from "./reports.controller.js";
 
@@ -11,7 +11,6 @@ export const reportsRoutes = async ({
   res: ServerResponse;
   pathname: string;
 }): Promise<boolean> => {
-  // Guard clause: Exit instantly if not a reports route
   if (!pathname.startsWith("/api/v1/reports")) return false;
 
   // Route: GET /api/v1/reports/:id/pdf (Download Full Report)
@@ -20,15 +19,16 @@ export const reportsRoutes = async ({
     pathname.endsWith("/pdf") &&
     req.method === "GET"
   ) {
-    // Extract the dynamic UUID from the path string
     const reportId = pathname
       .replace("/api/v1/reports/", "")
       .replace("/pdf", "");
 
-    // Strict Fail-Fast Validation: Matches exact logic from your AI controllers
     const uuidRegex =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(reportId)) {
+      process.stderr.write(
+        `[HTTP_REJECT] Invalid Report ID format for PDF: ${reportId}\n`,
+      );
       res.setHeader("Content-Type", "application/json");
       res.statusCode = 400;
       res.end(JSON.stringify({ error: "Invalid report ID format requested." }));
@@ -39,15 +39,59 @@ export const reportsRoutes = async ({
     return true;
   }
 
-  // --- PHASE 2 ROUTES (Placeholder for AI Chat, do not implement yet) ---
-  /*
-  if (pathname.startsWith("/api/v1/reports/") && pathname.endsWith("/chat") && req.method === "GET") {
-     // get chat history logic will go here
+  // --- PHASE 2 ROUTES: AI CHAT ---
+
+  // Route: GET /api/v1/reports/:id/chat (Fetch History)
+  if (
+    pathname.startsWith("/api/v1/reports/") &&
+    pathname.endsWith("/chat") &&
+    req.method === "GET"
+  ) {
+    const reportId = pathname
+      .replace("/api/v1/reports/", "")
+      .replace("/chat", "");
+
+    const uuidRegex =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(reportId)) {
+      process.stderr.write(
+        `[HTTP_REJECT] Invalid Report ID format for Chat History: ${reportId}\n`,
+      );
+      res.setHeader("Content-Type", "application/json");
+      res.statusCode = 400;
+      res.end(JSON.stringify({ error: "Invalid report ID format requested." }));
+      return true;
+    }
+
+    await reportsController.getChatHistory(req, res, reportId);
+    return true;
   }
-  if (pathname.startsWith("/api/v1/reports/") && pathname.endsWith("/chat") && req.method === "POST") {
-     // send new chat message logic will go here
+
+  // Route: POST /api/v1/reports/:id/chat (Send Message)
+  if (
+    pathname.startsWith("/api/v1/reports/") &&
+    pathname.endsWith("/chat") &&
+    req.method === "POST"
+  ) {
+    const reportId = pathname
+      .replace("/api/v1/reports/", "")
+      .replace("/chat", "");
+
+    const uuidRegex =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(reportId)) {
+      process.stderr.write(
+        `[HTTP_REJECT] Invalid Report ID format for Chat Message: ${reportId}\n`,
+      );
+      res.setHeader("Content-Type", "application/json");
+      res.statusCode = 400;
+      res.end(JSON.stringify({ error: "Invalid report ID format requested." }));
+      return true;
+    }
+
+    await reportsController.sendMessage(req, res, reportId);
+    return true;
   }
-  */
 
   return false;
 };

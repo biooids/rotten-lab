@@ -1,6 +1,5 @@
-// src/features/ai/reports/reports.types.ts
+//src/features/ai/reports/reports.types.ts
 
-// --- PDF GENERATION TYPES ---
 export interface DatabaseReportContext {
   id: string;
   target_url: string;
@@ -22,12 +21,13 @@ export interface DatabaseFindingContext {
   ai_fix_suggestion: string;
 }
 
-// --- CHAT SYSTEM TYPES (Prepared for Phase 2, strictly defined now) ---
+// --- CHAT SYSTEM TYPES ---
 export type ChatRole = "user" | "ai";
 
 export interface ReportChatSession {
   id: string;
   report_id: string;
+  finding_id: string; // NEW: Strict per-card relation mapping
   user_id: string;
   role: ChatRole;
   message: string;
@@ -36,6 +36,8 @@ export interface ReportChatSession {
 
 export interface ChatMessageRequestDTO {
   message: string;
+  findingId: string; // CHANGED: Now required, no longer optional
+  selectedModel?: string;
 }
 
 export interface ChatHistoryResponse {

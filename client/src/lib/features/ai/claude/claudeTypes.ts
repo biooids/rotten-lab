@@ -36,8 +36,7 @@ export const CLAUDE_MODEL_CATALOG: readonly ClaudeModelInfo[] = [
     id: "claude-haiku-4-5",
     label: "Haiku 4.5",
     tagline: "Fastest & cheapest",
-    strengths:
-      "Snappy turnaround on small repos and quick web sweeps.",
+    strengths: "Snappy turnaround on small repos and quick web sweeps.",
     tradeoff: "Less depth on tricky multi-file logic.",
   },
 ] as const;
@@ -116,4 +115,26 @@ export interface ScanHistoryResponse {
   message: string;
   data: ScanReport[];
   meta?: PaginationMeta;
+}
+
+// --- NEW CHAT SYSTEM TYPES ---
+export type ChatRole = "user" | "ai";
+
+export interface ReportChatSession {
+  id: string;
+  report_id: string;
+  user_id: string;
+  role: ChatRole;
+  message: string;
+  created_at: string;
+}
+
+export interface ChatMessageRequestDTO {
+  message: string;
+  findingId?: string;
+  selectedModel?: string;
+}
+
+export interface ChatHistoryResponse {
+  history: ReportChatSession[];
 }

@@ -29,7 +29,6 @@ export default function ReportDetails({
   const [pollInterval, setPollInterval] = useState<number>(3000);
   const [page, setPage] = useState(1);
 
-  // --- NEW: Local UI state for the download status ---
   const [downloadStatus, setDownloadStatus] = useState<
     "idle" | "success" | "error"
   >("idle");
@@ -95,7 +94,6 @@ export default function ReportDetails({
     }
   }, [pollingError]);
 
-  // --- UPDATED: PDF Download Handler (No more alerts, handles backend JSON errors) ---
   const handleDownloadPdf = async () => {
     setDownloadStatus("idle");
     setDownloadErrorMsg("");
@@ -108,8 +106,6 @@ export default function ReportDetails({
         blob = await downloadGeminiPdf(reportId).unwrap();
       }
 
-      // If the backend threw a 400 Error, the responseHandler converted that JSON into a Blob.
-      // We check if it's JSON to extract the actual error message instead of saving a broken PDF.
       if (blob.type === "application/json") {
         const text = await blob.text();
         const json = JSON.parse(text);
@@ -123,13 +119,11 @@ export default function ReportDetails({
       triggerFileDownload(blob, `${engine}_audit_${reportId}.pdf`);
 
       setDownloadStatus("success");
-      // Hide the success message after 5 seconds
       setTimeout(() => setDownloadStatus("idle"), 5000);
     } catch (error: any) {
       console.error("Failed to download PDF:", error);
       setDownloadStatus("error");
 
-      // Fallbacks for standard fetch/RTK errors vs our custom JSON error above
       const extractedMessage =
         error?.message ||
         error?.data?.error ||
@@ -147,7 +141,7 @@ export default function ReportDetails({
         </div>
         <Button
           variant="outline"
-          className=" rounded-none border-3 border-double mt-4"
+          className="rounded-none border-3 border-double mt-4"
         >
           <Link href="/ai-lab" className="w-full">
             Back to Dashboard
@@ -159,10 +153,7 @@ export default function ReportDetails({
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      <Button
-        variant="outline"
-        className=" rounded-none border-3 border-double "
-      >
+      <Button variant="outline" className="rounded-none border-3 border-double">
         <Link href="/ai-lab" className="w-full">
           Back to Dashboard
         </Link>
@@ -266,7 +257,6 @@ export default function ReportDetails({
                   </button>
                 </div>
 
-                {/* --- NEW: DOWNLOAD STATUS UI --- */}
                 {downloadStatus === "success" && (
                   <div className="text-[10px] font-bold border-3 border-double border-primary text-primary bg-primary/10 px-2 py-1">
                     [ SUCCESS ] PDF downloaded securely.
@@ -306,7 +296,12 @@ export default function ReportDetails({
               <div className="flex flex-col gap-4">
                 <div className="grid grid-cols-1 gap-4">
                   {activeFindings.map((finding: any) => (
-                    <VulnerabilityCard key={finding.id} finding={finding} />
+                    <VulnerabilityCard
+                      key={finding.id}
+                      finding={finding}
+                      reportId={reportId}
+                      engine={engine}
+                    />
                   ))}
                 </div>
 

@@ -7,13 +7,15 @@ import {
   ScanHistoryResponse,
   HistoryQueryParams,
   ReportQueryParams,
+  ChatHistoryResponse,
+  ReportChatSession,
 } from "./claudeTypes";
 import { baseQueryWithReauth } from "@/lib/api/baseQueryWithReauth";
 
 export const claudeApiSlice = createApi({
   reducerPath: "claudeApi",
   baseQuery: baseQueryWithReauth,
-  tagTypes: ["ClaudeScan", "ClaudeHistory"],
+  tagTypes: ["ClaudeScan", "ClaudeHistory", "ClaudeChat"],
   endpoints: (builder) => ({
     claudeScanUrl: builder.mutation<InitScanResponse, ScanRequestDTO>({
       query: (scanData) => ({
@@ -58,13 +60,43 @@ export const claudeApiSlice = createApi({
       ],
     }),
 
-    // FIXED: Now points directly to the dedicated reports service instead of the AI router
     downloadClaudeReportPdf: builder.mutation<Blob, string>({
       query: (reportId) => ({
         url: `/reports/${reportId}/pdf`,
         method: "GET",
         responseHandler: (response) => response.blob(),
       }),
+    }),
+
+    // --- UPDATED CHAT SYSTEM ENDPOINTS (Strict findingId enforcement) ---
+    getClaudeChatHistory: builder.query<
+      ChatHistoryResponse,
+      { reportId: string; findingId: string }
+    >({
+      query: ({ reportId, findingId }) =>
+        `/reports/${reportId}/chat?findingId=${findingId}`,
+      providesTags: (result, error, { findingId }) => [
+        { type: "ClaudeChat", id: findingId },
+      ],
+    }),
+
+    sendClaudeChatMessage: builder.mutation<
+      ReportChatSession,
+      {
+        reportId: string;
+        message: string;
+        findingId: string; // Made strictly required
+        selectedModel?: string;
+      }
+    >({
+      query: ({ reportId, ...chatBody }) => ({
+        url: `/reports/${reportId}/chat`,
+        method: "POST",
+        body: chatBody,
+      }),
+      invalidatesTags: (result, error, { findingId }) => [
+        { type: "ClaudeChat", id: findingId },
+      ],
     }),
   }),
 });
@@ -75,4 +107,6 @@ export const {
   useGetClaudeHistoryQuery,
   useGetClaudeReportQuery,
   useDownloadClaudeReportPdfMutation,
+  useGetClaudeChatHistoryQuery,
+  useSendClaudeChatMessageMutation,
 } = claudeApiSlice;
