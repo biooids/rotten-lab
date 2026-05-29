@@ -1,4 +1,3 @@
-//src/features/ai/claude/claude.types.ts
 export type ClaudeModelId =
   | "claude-sonnet-4-6"
   | "claude-opus-4-7"
@@ -19,6 +18,8 @@ export interface DatabaseScanReport {
   status: "pending" | "processing" | "completed" | "failed";
   engine_warnings: string[];
   scanned_by: string | null;
+  total_chunks: number;
+  completed_chunks: number;
   created_at: Date;
   updated_at: Date;
 }

@@ -1,4 +1,3 @@
-//src/features/ai/gemini/gemini.types.ts
 export type GeminiModelId =
   | "gemini-2.5-pro"
   | "gemini-2.5-flash"
@@ -19,6 +18,8 @@ export interface DatabaseScanReport {
   status: "pending" | "processing" | "completed" | "failed";
   engine_warnings: string[];
   scanned_by: string | null;
+  total_chunks: number;
+  completed_chunks: number;
   created_at: Date;
   updated_at: Date;
 }

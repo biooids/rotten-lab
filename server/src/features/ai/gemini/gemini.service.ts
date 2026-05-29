@@ -1,5 +1,6 @@
 //src/features/ai/gemini/gemini.service.ts
 import { GoogleGenAI, Type } from "@google/genai";
+import { setTimeout } from "node:timers/promises";
 import { pool } from "../../../db/psql.js";
 import { gitScannerService } from "../../ai/core-scanners/gitScanner.service.js";
 import { webScannerService } from "../../ai/core-scanners/webScanner.service.js";
@@ -31,9 +32,10 @@ export const geminiService = {
       `[GEMINI_DB_INIT] Committing new parent report row with status PENDING for target: ${targetUrl} (model=${model})\n`,
     );
 
+    // MANUALLY ADDED: total_chunks and completed_chunks defaults
     const masterSql = `
-      INSERT INTO scan_reports (target_url, scan_type, ai_provider, ai_model, scanned_by, status, engine_warnings)
-      VALUES ($1, $2, 'gemini', $3, $4, 'pending', '{}')
+      INSERT INTO scan_reports (target_url, scan_type, ai_provider, ai_model, scanned_by, status, engine_warnings, total_chunks, completed_chunks)
+      VALUES ($1, $2, 'gemini', $3, $4, 'pending', '{}', 0, 0)
       RETURNING *;
     `;
     const result = await pool.query(masterSql, [
@@ -60,10 +62,6 @@ export const geminiService = {
       process.stdout.write(
         `[BACKGROUND_WORKER] Starting URL background execution for Report ID: ${reportId} (provider=gemini model=${model})\n`,
       );
-      await pool.query(
-        `UPDATE scan_reports SET status = 'processing', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-        [reportId],
-      );
 
       const rawVulnerabilities = await webScannerService.runScan(targetUrl);
 
@@ -78,6 +76,13 @@ export const geminiService = {
         return;
       }
 
+      // MANUALLY ADDED: Calculate total chunks and save to DB before hitting the AI loop
+      const calculatedTotalChunks = Math.ceil(rawVulnerabilities.length / 4);
+      await pool.query(
+        `UPDATE scan_reports SET status = 'processing', total_chunks = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+        [calculatedTotalChunks, reportId],
+      );
+
       await this.processBulkGeminiCall(
         reportId,
         rawVulnerabilities,
@@ -89,6 +94,11 @@ export const geminiService = {
       process.stderr.write(
         `[BACKGROUND_CRASH_URL] Background worker failed | reportId=${reportId} adminId=${adminId} provider=gemini model=${model} | ${err?.constructor?.name || "Error"}: ${err?.message || err}\nStack: ${err?.stack || "no stack"}\n`,
       );
+      // EXPLICIT ERROR DUMP
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+      );
+
       await pool.query(
         `
         UPDATE scan_reports
@@ -112,10 +122,6 @@ export const geminiService = {
       process.stdout.write(
         `[BACKGROUND_WORKER] Starting Git background execution loop matching Semgrep and Framework Analysis for Report ID: ${reportId} (provider=gemini model=${model})\n`,
       );
-      await pool.query(
-        `UPDATE scan_reports SET status = 'processing', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-        [reportId],
-      );
 
       const scanOutputs = await gitScannerService.runScan(targetUrl);
       const rawVulnerabilities = scanOutputs.findings;
@@ -132,6 +138,13 @@ export const geminiService = {
         return;
       }
 
+      // MANUALLY ADDED: Calculate total chunks and save to DB before hitting the AI loop
+      const calculatedTotalChunks = Math.ceil(rawVulnerabilities.length / 4);
+      await pool.query(
+        `UPDATE scan_reports SET status = 'processing', total_chunks = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+        [calculatedTotalChunks, reportId],
+      );
+
       await this.processBulkGeminiCall(
         reportId,
         rawVulnerabilities,
@@ -144,6 +157,11 @@ export const geminiService = {
       process.stderr.write(
         `[BACKGROUND_CRASH_REPO] Git worker failed | reportId=${reportId} adminId=${adminId} provider=gemini model=${model} | ${err?.constructor?.name || "Error"}: ${err?.message || err}\nStack: ${err?.stack || "no stack"}\n`,
       );
+      // EXPLICIT ERROR DUMP
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+      );
+
       await pool.query(
         `
         UPDATE scan_reports
@@ -171,17 +189,14 @@ export const geminiService = {
     projectContext?: string,
   ): Promise<void> {
     const aiStartTime = Date.now();
-    process.stdout.write(
-      `[GEMINI_BULK_START] Compiling ${rawFindings.length} findings into a single AI prompt structure execution loop.\n`,
-    );
 
-    const structuredPayload = rawFindings.map((finding, index) => ({
-      reference_id: index,
-      file_path: finding.file_path,
-      rule: finding.vulnerability_name,
-      severity: finding.severity,
-      snippet: finding.code_snippet,
-    }));
+    // Explicit manual chunk variables
+    const CHUNK_SIZE = 4;
+    const totalChunks = Math.ceil(rawFindings.length / CHUNK_SIZE);
+
+    process.stdout.write(
+      `[GEMINI_BULK_START] Commencing chunked AI processing loop. Total Findings: ${rawFindings.length} | Total Chunks: ${totalChunks}\n`,
+    );
 
     let contextualSystemBaseInstruction = `You are a Senior Application Security Engineer. You will receive a JSON array of raw code vulnerabilities. You must analyze each one and return a strictly formatted JSON array containing the exact remediation steps for each item, mapped by its 'reference_id'. Do not miss any items. You MUST return ONLY valid JSON, starting with [ and ending with ], with no markdown blocks, no prose preamble, and no commentary outside the JSON array.`;
 
@@ -189,91 +204,282 @@ export const geminiService = {
       contextualSystemBaseInstruction = `${contextualSystemBaseInstruction}\n\nCRITICAL ARCHITECTURE INFORMATION: The code repository ecosystem relies heavily on the following package environment dependencies context list configuration details: ${projectContext}. You MUST structure all how_to_fix suggestions to cleanly utilize native APIs, patterns, and features belonging strictly to these framework dependency architectures instead of giving generalized vanilla textbook solution guidelines.`;
     }
 
-    const runtimePrompt = `
-      Analyze this array of flagged vulnerabilities:
-      ${JSON.stringify(structuredPayload, null, 2)}
-      
-      Return a JSON array of objects. Each object must contain:
-      - reference_id: The exact integer from the input.
-      - explanation: Technical root cause analysis.
-      - how_to_trigger: How an attacker would exploit this.
-      - how_to_fix: Concrete code/configuration remediation.
-    `;
-
-    try {
-      process.stdout.write(
-        `[GEMINI_API_EXECUTE] Transmitting bulk JSON prompt structure data elements to ${model} model interface...\n`,
+    // MANUALLY ADDED: The Explicit Iteration Loop
+    for (
+      let chunkStart = 0;
+      chunkStart < rawFindings.length;
+      chunkStart += CHUNK_SIZE
+    ) {
+      const chunkNumber = Math.floor(chunkStart / CHUNK_SIZE) + 1;
+      const currentChunkFindings = rawFindings.slice(
+        chunkStart,
+        chunkStart + CHUNK_SIZE,
       );
-      const response = await ai.models.generateContent({
-        model,
-        contents: runtimePrompt,
-        config: {
-          systemInstruction: contextualSystemBaseInstruction,
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                reference_id: { type: Type.INTEGER },
-                explanation: { type: Type.STRING },
-                how_to_trigger: { type: Type.STRING },
-                how_to_fix: { type: Type.STRING },
+
+      process.stdout.write(
+        `\n[GEMINI_CHUNK_${chunkNumber}] Transmitting findings ${chunkStart + 1} to ${Math.min(chunkStart + CHUNK_SIZE, rawFindings.length)} to ${model}...\n`,
+      );
+
+      // Map payload strictly for this specific chunk, but preserve absolute reference_id mapping
+      const structuredPayload = currentChunkFindings.map(
+        (finding, localIndex) => {
+          const absoluteIndex = chunkStart + localIndex;
+          return {
+            reference_id: absoluteIndex,
+            file_path: finding.file_path,
+            rule: finding.vulnerability_name,
+            severity: finding.severity,
+            snippet: finding.code_snippet,
+          };
+        },
+      );
+
+      const runtimePrompt = `
+        Analyze this array of flagged vulnerabilities:
+        ${JSON.stringify(structuredPayload, null, 2)}
+        
+        Return a JSON array of objects. Each object must contain:
+        - reference_id: The exact integer from the input.
+        - explanation: Technical root cause analysis.
+        - how_to_trigger: How an attacker would exploit this.
+        - how_to_fix: Concrete code/configuration remediation.
+      `;
+
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: runtimePrompt,
+          config: {
+            systemInstruction: contextualSystemBaseInstruction,
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  reference_id: { type: Type.INTEGER },
+                  explanation: { type: Type.STRING },
+                  how_to_trigger: { type: Type.STRING },
+                  how_to_fix: { type: Type.STRING },
+                },
+                required: [
+                  "reference_id",
+                  "explanation",
+                  "how_to_trigger",
+                  "how_to_fix",
+                ],
               },
-              required: [
-                "reference_id",
-                "explanation",
-                "how_to_trigger",
-                "how_to_fix",
-              ],
             },
           },
-        },
-      });
+        });
 
-      const usage = response.usageMetadata;
-      const promptTokens = usage?.promptTokenCount ?? 0;
-      const completionTokens = usage?.candidatesTokenCount ?? 0;
-      const totalTokens = usage?.totalTokenCount ?? 0;
+        const usage = response.usageMetadata;
+        const promptTokens = usage?.promptTokenCount ?? 0;
+        const completionTokens = usage?.candidatesTokenCount ?? 0;
+        const totalTokens = usage?.totalTokenCount ?? 0;
 
-      process.stdout.write(
-        `[GEMINI_API_SUCCESS] Bulk analysis complete. Cost: ${totalTokens} tokens. Saving logs to tracking metrics...\n`,
-      );
-
-      await pool.query(
-        `
-        INSERT INTO ai_token_logs (admin_id, model_used, prompt_tokens, completion_tokens, total_tokens, action_type)
-        VALUES ($1, $2, $3, $4, $5, $6);
-      `,
-        [
-          adminId,
-          model,
-          promptTokens,
-          completionTokens,
-          totalTokens,
-          scanType === "url" ? "URL_SCAN" : "REPO_SCAN",
-        ],
-      );
-
-      if (!response.text) {
-        throw new Error("AI completed but returned an empty response string.");
-      }
-
-      // Local try/catch around JSON.parse so we can distinguish "Gemini broke JSON contract"
-      // from "Google API returned an error". Even with responseMimeType: application/json,
-      // Gemini occasionally emits a markdown-wrapped or truncated payload, especially when
-      // the prompt is at the edge of the context window. Capture the first 500 chars so we
-      // can debug prompts, and write a SPECIFIC engine_warning so the user can retry.
-      let aiResultsArray: BulkGeminiFindingResponse[];
-      try {
-        aiResultsArray = JSON.parse(
-          response.text,
-        ) as BulkGeminiFindingResponse[];
-      } catch (parseErr: any) {
-        process.stderr.write(
-          `[GEMINI_RESPONSE_PARSE_FAIL] reportId=${reportId} provider=gemini model=${model} | ${parseErr?.constructor?.name || "SyntaxError"}: ${parseErr?.message}\n` +
-            `[GEMINI_RESPONSE_PARSE_FAIL] First 500 chars of returned text: ${response.text.substring(0, 500)}\n`,
+        process.stdout.write(
+          `[GEMINI_CHUNK_${chunkNumber}_SUCCESS] Cost: ${totalTokens} tokens. Saving chunk token metrics...\n`,
         );
+
+        await pool.query(
+          `
+          INSERT INTO ai_token_logs (admin_id, model_used, prompt_tokens, completion_tokens, total_tokens, action_type)
+          VALUES ($1, $2, $3, $4, $5, $6);
+        `,
+          [
+            adminId,
+            model,
+            promptTokens,
+            completionTokens,
+            totalTokens,
+            scanType === "url" ? "URL_SCAN" : "REPO_SCAN",
+          ],
+        );
+
+        if (!response.text) {
+          throw new Error(
+            "AI completed but returned an empty response string.",
+          );
+        }
+
+        let aiResultsArray: BulkGeminiFindingResponse[];
+        try {
+          aiResultsArray = JSON.parse(
+            response.text,
+          ) as BulkGeminiFindingResponse[];
+        } catch (parseErr: any) {
+          process.stderr.write(
+            `[GEMINI_RESPONSE_PARSE_FAIL] reportId=${reportId} provider=gemini model=${model} | ${parseErr?.constructor?.name || "SyntaxError"}: ${parseErr?.message}\n` +
+              `[GEMINI_RESPONSE_PARSE_FAIL] First 500 chars of returned text: ${response.text.substring(0, 500)}\n`,
+          );
+          await pool.query(
+            `
+            UPDATE scan_reports
+            SET status = 'failed',
+                engine_warnings = array_append(engine_warnings, $1),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $2
+          `,
+            [
+              `Gemini chunk ${chunkNumber} returned a response that wasn't valid JSON. This is intermittent — please retry the scan. (parser said: ${parseErr?.message?.substring(0, 200)})`,
+              reportId,
+            ],
+          );
+          // Stop execution entirely if a chunk fundamentally breaks
+          return;
+        }
+
+        process.stdout.write(
+          `[GEMINI_DB_WRITE] Writing ${aiResultsArray.length} findings from Chunk ${chunkNumber} to DB...\n`,
+        );
+
+        const returnedReferenceIds = new Set<number>();
+        for (const aiResult of aiResultsArray) {
+          const originalRawFinding = rawFindings[aiResult.reference_id];
+          if (!originalRawFinding) {
+            process.stderr.write(
+              `[GEMINI_REF_ID_INVALID] reportId=${reportId} reference_id=${aiResult.reference_id} not present in input findings. Skipping.\n`,
+            );
+            continue;
+          }
+          returnedReferenceIds.add(aiResult.reference_id);
+
+          await pool.query(
+            `
+            INSERT INTO scan_findings (
+              report_id, file_path, vulnerability_name, severity,
+              code_snippet, ai_explanation, how_to_trigger, ai_fix_suggestion
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
+          `,
+            [
+              reportId,
+              originalRawFinding.file_path,
+              originalRawFinding.vulnerability_name,
+              originalRawFinding.severity,
+              originalRawFinding.code_snippet,
+              aiResult.explanation,
+              aiResult.how_to_trigger,
+              aiResult.how_to_fix,
+            ],
+          );
+        }
+
+        // Detect dropped findings for this specific chunk
+        const droppedFindings: string[] = [];
+        for (
+          let i = chunkStart;
+          i < chunkStart + currentChunkFindings.length;
+          i++
+        ) {
+          if (!returnedReferenceIds.has(i)) {
+            const dropped = rawFindings[i];
+            if (dropped) {
+              droppedFindings.push(
+                `${dropped.vulnerability_name} @ ${dropped.file_path}`,
+              );
+            }
+          }
+        }
+        if (droppedFindings.length > 0) {
+          process.stderr.write(
+            `[GEMINI_FINDINGS_DROPPED] Chunk ${chunkNumber} dropped ${droppedFindings.length} items: ${droppedFindings.join("; ").substring(0, 400)}\n`,
+          );
+          await pool.query(
+            `
+            UPDATE scan_reports
+            SET engine_warnings = array_append(engine_warnings, $1),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $2
+          `,
+            [
+              `Chunk ${chunkNumber} dropped ${droppedFindings.length} item(s) without analysis: ${droppedFindings.slice(0, 5).join("; ")}${droppedFindings.length > 5 ? "; ..." : ""}`,
+              reportId,
+            ],
+          );
+        }
+
+        // MANUALLY ADDED: Increment completed_chunks in DB directly after the write finishes
+        await pool.query(
+          `UPDATE scan_reports SET completed_chunks = completed_chunks + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+          [reportId],
+        );
+
+        // MANUALLY ADDED: The 60 second Rate Limit Sleep (If not the last chunk)
+        if (chunkNumber < totalChunks) {
+          process.stdout.write(
+            `[GEMINI_RATE_LIMIT] Chunk ${chunkNumber} of ${totalChunks} complete. Sleeping thread for 61 seconds to refresh Free Tier token bucket...\n`,
+          );
+          await setTimeout(61000);
+        }
+      } catch (aiErr: any) {
+        const httpStatus = aiErr?.status ?? aiErr?.response?.status ?? null;
+        const googleStatus = aiErr?.error?.status ?? aiErr?.code ?? null;
+        const errMsgLower = String(aiErr?.message || "").toLowerCase();
+
+        let category = "UNKNOWN";
+        let userFacingHint = `Unexpected failure during Gemini chunk processing: ${aiErr?.message || "no message"}`;
+
+        if (
+          httpStatus === 401 ||
+          googleStatus === "UNAUTHENTICATED" ||
+          errMsgLower.includes("api key not valid") ||
+          errMsgLower.includes("api key expired")
+        ) {
+          category = "AUTH_FAILED";
+          userFacingHint =
+            "Gemini API key is invalid or expired. The server administrator needs to rotate GEMINI_API_KEY.";
+        } else if (
+          httpStatus === 403 ||
+          googleStatus === "PERMISSION_DENIED" ||
+          errMsgLower.includes("does not have access") ||
+          errMsgLower.includes("permission")
+        ) {
+          category = "PERMISSION_DENIED";
+          userFacingHint = `Your Gemini API key doesn't have access to the model "${model}". Switch to gemini-2.5-flash, or upgrade your Google AI plan.`;
+        } else if (
+          httpStatus === 404 ||
+          googleStatus === "NOT_FOUND" ||
+          errMsgLower.includes("model not found") ||
+          errMsgLower.includes("does not exist")
+        ) {
+          category = "MODEL_NOT_FOUND";
+          userFacingHint = `Google doesn't recognize the model "${model}". Pick a different one from the picker.`;
+        } else if (
+          httpStatus === 429 ||
+          googleStatus === "RESOURCE_EXHAUSTED" ||
+          errMsgLower.includes("quota") ||
+          errMsgLower.includes("rate limit")
+        ) {
+          category = "QUOTA_EXCEEDED";
+          userFacingHint =
+            "Gemini quota or rate limit exceeded on this API key. If you're on the free tier you've hit your daily cap.";
+        } else if (httpStatus === 400 || googleStatus === "INVALID_ARGUMENT") {
+          category = "BAD_REQUEST";
+          userFacingHint = `Google rejected the request as malformed: ${aiErr?.message?.substring(0, 200) || "no detail"}.`;
+        } else if (typeof httpStatus === "number" && httpStatus >= 500) {
+          category = "PROVIDER_5XX";
+          userFacingHint =
+            "Google's Gemini API returned a 5xx server error. Not your fault — retry in a minute.";
+        } else if (
+          aiErr?.code === "ECONNREFUSED" ||
+          aiErr?.code === "ENOTFOUND" ||
+          aiErr?.code === "ETIMEDOUT" ||
+          aiErr?.name === "AbortError"
+        ) {
+          category = "NETWORK";
+          userFacingHint =
+            "Couldn't reach Google's Gemini API (network error). Check the server's internet connection and retry.";
+        }
+
+        process.stderr.write(
+          `[GEMINI_CHUNK_CRASH] reportId=${reportId} chunk=${chunkNumber} category=${category} status=${httpStatus} | ${aiErr?.message || "no message"}\nStack: ${aiErr?.stack || "no stack"}\n`,
+        );
+        // EXPLICIT ERROR DUMP
+        process.stderr.write(
+          `[RAW_ERROR_DUMP] ${JSON.stringify(aiErr, Object.getOwnPropertyNames(aiErr), 2)}\n`,
+        );
+
         await pool.query(
           `
           UPDATE scan_reports
@@ -282,167 +488,22 @@ export const geminiService = {
               updated_at = CURRENT_TIMESTAMP
           WHERE id = $2
         `,
-          [
-            `Gemini returned a response that wasn't valid JSON. This is intermittent — please retry the scan. (parser said: ${parseErr?.message?.substring(0, 200)})`,
-            reportId,
-          ],
+          [userFacingHint, reportId],
         );
+
+        // Break the loop entirely to stop processing remaining chunks
         return;
       }
+    } // End of Manual Loop
 
-      process.stdout.write(
-        `[GEMINI_DB_WRITE] Writing ${aiResultsArray.length} parsed analytical findings to PostgreSQL context layers...\n`,
-      );
-
-      // Track returned vs requested reference_ids so we can flag any findings Gemini
-      // silently dropped — the user deserves to know if the scanner found 6 things and
-      // the AI only enriched 4 of them.
-      const returnedReferenceIds = new Set<number>();
-      for (const aiResult of aiResultsArray) {
-        const originalRawFinding = rawFindings[aiResult.reference_id];
-        if (!originalRawFinding) {
-          process.stderr.write(
-            `[GEMINI_REF_ID_INVALID] reportId=${reportId} reference_id=${aiResult.reference_id} not present in input findings (input count=${rawFindings.length}). Skipping.\n`,
-          );
-          continue;
-        }
-        returnedReferenceIds.add(aiResult.reference_id);
-
-        await pool.query(
-          `
-          INSERT INTO scan_findings (
-            report_id, file_path, vulnerability_name, severity,
-            code_snippet, ai_explanation, how_to_trigger, ai_fix_suggestion
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
-        `,
-          [
-            reportId,
-            originalRawFinding.file_path,
-            originalRawFinding.vulnerability_name,
-            originalRawFinding.severity,
-            originalRawFinding.code_snippet,
-            aiResult.explanation,
-            aiResult.how_to_trigger,
-            aiResult.how_to_fix,
-          ],
-        );
-      }
-
-      const droppedFindings: string[] = [];
-      for (let i = 0; i < rawFindings.length; i++) {
-        if (!returnedReferenceIds.has(i)) {
-          const dropped = rawFindings[i];
-          if (dropped) {
-            droppedFindings.push(
-              `${dropped.vulnerability_name} @ ${dropped.file_path}`,
-            );
-          }
-        }
-      }
-      if (droppedFindings.length > 0) {
-        process.stderr.write(
-          `[GEMINI_FINDINGS_DROPPED] reportId=${reportId} provider=gemini model=${model} | AI returned ${aiResultsArray.length} of ${rawFindings.length} input findings. Dropped: ${droppedFindings.join("; ").substring(0, 400)}\n`,
-        );
-        await pool.query(
-          `
-          UPDATE scan_reports
-          SET engine_warnings = array_append(engine_warnings, $1),
-              updated_at = CURRENT_TIMESTAMP
-          WHERE id = $2
-        `,
-          [
-            `AI returned ${aiResultsArray.length} of ${rawFindings.length} findings. ${droppedFindings.length} item(s) were dropped without analysis: ${droppedFindings.slice(0, 5).join("; ")}${droppedFindings.length > 5 ? "; ..." : ""}`,
-            reportId,
-          ],
-        );
-      }
-
-      process.stdout.write(
-        `[BACKGROUND_WORKER_SUCCESS] Scan ID ${reportId} completely successfully in ${Date.now() - aiStartTime}ms.\n`,
-      );
-      await pool.query(
-        `UPDATE scan_reports SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-        [reportId],
-      );
-    } catch (aiErr: any) {
-      // Inspect the upstream Google GenAI SDK error so the user gets actionable feedback.
-      // Google's errors expose .status (HTTP code), sometimes .code, and may include a
-      // structured .error.status string like "PERMISSION_DENIED" / "RESOURCE_EXHAUSTED".
-      // Map each known case to a clear user-facing engine_warning instead of dumping the
-      // raw 400/403/429 message.
-      const httpStatus = aiErr?.status ?? aiErr?.response?.status ?? null;
-      const googleStatus = aiErr?.error?.status ?? aiErr?.code ?? null;
-      const errMsgLower = String(aiErr?.message || "").toLowerCase();
-
-      let category = "UNKNOWN";
-      let userFacingHint = `Unexpected failure during Gemini bulk processing: ${aiErr?.message || "no message"}`;
-
-      if (
-        httpStatus === 401 ||
-        googleStatus === "UNAUTHENTICATED" ||
-        errMsgLower.includes("api key not valid") ||
-        errMsgLower.includes("api key expired")
-      ) {
-        category = "AUTH_FAILED";
-        userFacingHint =
-          "Gemini API key is invalid or expired. The server administrator needs to rotate GEMINI_API_KEY.";
-      } else if (
-        httpStatus === 403 ||
-        googleStatus === "PERMISSION_DENIED" ||
-        errMsgLower.includes("does not have access") ||
-        errMsgLower.includes("permission")
-      ) {
-        category = "PERMISSION_DENIED";
-        userFacingHint = `Your Gemini API key doesn't have access to the model "${model}". This typically means you're on the free tier and selected a paid-tier model (e.g. Pro). Switch to gemini-2.5-flash, or upgrade your Google AI plan.`;
-      } else if (
-        httpStatus === 404 ||
-        googleStatus === "NOT_FOUND" ||
-        errMsgLower.includes("model not found") ||
-        errMsgLower.includes("does not exist")
-      ) {
-        category = "MODEL_NOT_FOUND";
-        userFacingHint = `Google doesn't recognize the model "${model}". This model may have been deprecated — pick a different one from the picker.`;
-      } else if (
-        httpStatus === 429 ||
-        googleStatus === "RESOURCE_EXHAUSTED" ||
-        errMsgLower.includes("quota") ||
-        errMsgLower.includes("rate limit")
-      ) {
-        category = "QUOTA_EXCEEDED";
-        userFacingHint =
-          "Gemini quota or rate limit exceeded on this API key. If you're on the free tier you've hit your daily cap — wait until tomorrow or switch to Claude.";
-      } else if (httpStatus === 400 || googleStatus === "INVALID_ARGUMENT") {
-        category = "BAD_REQUEST";
-        userFacingHint = `Google rejected the request as malformed: ${aiErr?.message?.substring(0, 200) || "no detail"}. This is usually a server bug — please report it.`;
-      } else if (typeof httpStatus === "number" && httpStatus >= 500) {
-        category = "PROVIDER_5XX";
-        userFacingHint =
-          "Google's Gemini API returned a 5xx server error. Not your fault — retry in a minute.";
-      } else if (
-        aiErr?.code === "ECONNREFUSED" ||
-        aiErr?.code === "ENOTFOUND" ||
-        aiErr?.code === "ETIMEDOUT" ||
-        aiErr?.name === "AbortError"
-      ) {
-        category = "NETWORK";
-        userFacingHint =
-          "Couldn't reach Google's Gemini API (network error). Check the server's internet connection and retry.";
-      }
-
-      process.stderr.write(
-        `[GEMINI_BULK_CRASH] reportId=${reportId} adminId=${adminId} provider=gemini model=${model} category=${category} status=${httpStatus} googleStatus=${googleStatus} sdkClass=${aiErr?.constructor?.name || "n/a"} | ${aiErr?.message || "no message"}\nStack: ${aiErr?.stack || "no stack"}\n`,
-      );
-      await pool.query(
-        `
-        UPDATE scan_reports
-        SET status = 'failed',
-            engine_warnings = array_append(engine_warnings, $1),
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = $2
-      `,
-        [userFacingHint, reportId],
-      );
-    }
+    // If loop successfully completes entirely, flip main status to completed
+    process.stdout.write(
+      `[BACKGROUND_WORKER_SUCCESS] Scan ID ${reportId} processed all chunks successfully in ${Date.now() - aiStartTime}ms.\n`,
+    );
+    await pool.query(
+      `UPDATE scan_reports SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+      [reportId],
+    );
   },
 
   async getReportsHistory(

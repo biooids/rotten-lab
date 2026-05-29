@@ -1,4 +1,3 @@
-//src/lib/features/ai/claude/claudeTypes.ts
 export type SeverityLevel = "Low" | "Medium" | "High" | "Critical";
 export type ScanStatus = "pending" | "processing" | "completed" | "failed";
 
@@ -71,6 +70,8 @@ export interface ScanReport {
   status: ScanStatus;
   engine_warnings: string[];
   scanned_by: string | null;
+  total_chunks: number;
+  completed_chunks: number;
   created_at: string;
   updated_at: string;
 }

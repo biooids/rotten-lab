@@ -70,6 +70,8 @@ export interface ScanReport {
   status: ScanStatus;
   engine_warnings: string[];
   scanned_by: string | null;
+  total_chunks: number;
+  completed_chunks: number;
   created_at: string;
   updated_at: string;
 }

@@ -1,3 +1,4 @@
+//src/features/ai/reports/reports.service.ts
 import PDFDocument from "pdfkit";
 import { pool } from "../../../db/psql.js";
 import { GoogleGenAI } from "@google/genai";

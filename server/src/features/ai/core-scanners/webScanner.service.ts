@@ -256,6 +256,39 @@ export const webScannerService = {
               }
             });
 
+            await page.route("**/api/**", async (route) => {
+              const request = route.request();
+              const method = request.method();
+
+              if (method === "POST" || method === "PUT" || method === "PATCH") {
+                const contentType = request.headers()["content-type"] || "";
+
+                if (contentType.includes("application/json")) {
+                  try {
+                    const originalData = JSON.parse(request.postData() || "{}");
+                    const fuzzedData = { ...originalData };
+
+                    // Morph payload strings into structural MongoDB Operator Objects
+                    for (const key in fuzzedData) {
+                      if (typeof fuzzedData[key] === "string") {
+                        // Transforms {"username": "admin"} into {"username": {"$ne": null}}
+                        fuzzedData[key] = { $ne: null };
+                      }
+                    }
+
+                    // Forward the corrupted structural data to the API
+                    await route.continue({
+                      postData: JSON.stringify(fuzzedData),
+                    });
+                    return;
+                  } catch (e) {
+                    // Fall back to safety if parsing fails
+                  }
+                }
+              }
+              await route.continue();
+            });
+
             // NETWORK INTERCEPTOR: Deep JSON & GraphQL Analysis
             page.on("response", async (response) => {
               const url = response.url();

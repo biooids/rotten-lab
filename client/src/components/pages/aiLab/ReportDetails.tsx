@@ -171,7 +171,7 @@ export default function ReportDetails({
           <div className="flex items-center gap-3 flex-wrap">
             <span
               className={cn(
-                "text-[10px] font-bold border-3 border-double px-2 py-1 uppercase",
+                "text-[10px] font-bold border-3 border-double px-2 py-1 ",
                 engine === "claude"
                   ? "text-orange-500 border-orange-500 bg-orange-500/10"
                   : "text-blue-500 border-blue-500 bg-blue-500/10",
@@ -180,13 +180,13 @@ export default function ReportDetails({
               ENGINE: {engine}
             </span>
             {activeReport?.ai_model && (
-              <span className="text-[10px] font-bold border-3 border-double px-2 py-1 uppercase opacity-80">
+              <span className="text-[10px] font-bold border-3 border-double px-2 py-1  opacity-80">
                 MODEL: {activeReport.ai_model}
               </span>
             )}
             <span
               className={cn(
-                "text-xs font-bold border-3 border-double px-3 py-1 w-fit uppercase",
+                "text-xs font-bold border-3 border-double px-3 py-1 w-fit ",
                 isScanRunning
                   ? "animate-pulse border-primary text-primary"
                   : activeReport?.status === "failed"
@@ -201,7 +201,7 @@ export default function ReportDetails({
 
         {pollingError && (
           <div className="border-3 border-double border-destructive p-4 bg-destructive/10 flex flex-col gap-2 mt-2">
-            <span className="text-xs font-bold text-destructive uppercase">
+            <span className="text-xs font-bold text-destructive ">
               Could not fetch report status
             </span>
             <p className="text-xs font-bold opacity-80">
@@ -229,10 +229,29 @@ export default function ReportDetails({
         )}
 
         {isScanRunning && (
-          <FunFactLoader
-            engine={engine}
-            title="Analyzing target, please wait lil bro..."
-          />
+          <div className="flex flex-col gap-4">
+            <FunFactLoader
+              engine={engine}
+              title={
+                (activeReport?.total_chunks ?? 0) > 0
+                  ? `Analyzing code... (Processed Chunk ${activeReport?.completed_chunks ?? 0} of ${activeReport?.total_chunks ?? 0})`
+                  : "Resolving target and generating AST payload..."
+              }
+            />
+
+            {/* The 60-Second Sleep Indicator */}
+            {(activeReport?.total_chunks ?? 0) >
+              (activeReport?.completed_chunks ?? 0) && (
+              <div className="border-3 border-double border-primary text-primary bg-primary/10 p-4 text-xs font-bold text-center animate-pulse flex flex-col gap-1">
+                <span>[ AI ENGINE RATE LIMIT PROTOCOL ACTIVE ]</span>
+                <span className="opacity-80">
+                  Processing chunk {(activeReport?.completed_chunks ?? 0) + 1}.
+                  The AI thread will sleep for 60 seconds between chunks to
+                  bypass free-tier rate limits. Do not close this page.
+                </span>
+              </div>
+            )}
+          </div>
         )}
 
         {!isScanRunning && activeReport?.status === "completed" && (
@@ -274,7 +293,7 @@ export default function ReportDetails({
             {activeReport.engine_warnings &&
               activeReport.engine_warnings.length > 0 && (
                 <div className="border-3 border-double border-yellow-500 p-4 bg-yellow-500/10 flex flex-col gap-2">
-                  <span className="text-xs font-bold text-yellow-500 uppercase">
+                  <span className="text-xs font-bold text-yellow-500 ">
                     Engine Warnings ({activeReport.engine_warnings.length})
                   </span>
                   <ul className="list-disc list-inside text-xs font-bold opacity-80 space-y-1">
