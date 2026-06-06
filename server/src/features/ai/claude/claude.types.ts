@@ -1,3 +1,4 @@
+//src/features/ai/claude/claude.types.ts
 export type ClaudeModelId =
   | "claude-sonnet-4-6"
   | "claude-opus-4-7"

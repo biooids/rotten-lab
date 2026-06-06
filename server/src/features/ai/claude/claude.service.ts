@@ -190,12 +190,19 @@ export const claudeService = {
   ): Promise<void> {
     const aiStartTime = Date.now();
 
-    // Explicit manual chunk variables
     const CHUNK_SIZE = 4;
     const totalChunks = Math.ceil(rawFindings.length / CHUNK_SIZE);
 
+    // --- CRASH RECOVERY / RESUMPTION LOGIC ---
+    const stateRes = await pool.query(
+      `SELECT completed_chunks FROM scan_reports WHERE id = $1`,
+      [reportId],
+    );
+    const alreadyCompletedChunks = stateRes.rows[0]?.completed_chunks || 0;
+    const startingIndex = alreadyCompletedChunks * CHUNK_SIZE;
+
     process.stdout.write(
-      `[CLAUDE_BULK_START] Commencing chunked AI processing loop. Total Findings: ${rawFindings.length} | Total Chunks: ${totalChunks}\n`,
+      `[CLAUDE_BULK_START] Commencing chunked AI processing. Total Findings: ${rawFindings.length} | Total Chunks: ${totalChunks} | Resuming from Chunk: ${alreadyCompletedChunks + 1}\n`,
     );
 
     let contextualSystemBaseInstruction = `You are a Senior Application Security Engineer. You will receive a JSON array of raw code vulnerabilities. You must analyze each one and return a strictly formatted JSON array containing the exact remediation steps for each item, mapped by its 'reference_id'. Do not miss any items. You MUST return ONLY valid JSON, starting with [ and ending with ], with no markdown blocks or surrounding text.`;
@@ -204,9 +211,9 @@ export const claudeService = {
       contextualSystemBaseInstruction = `${contextualSystemBaseInstruction}\n\nCRITICAL ARCHITECTURE INFORMATION: The code repository ecosystem relies heavily on the following package environment dependencies context list configuration details: ${projectContext}. You MUST structure all how_to_fix suggestions to cleanly utilize native APIs, patterns, and features belonging strictly to these framework dependency architectures instead of giving generalized vanilla textbook solution guidelines.`;
     }
 
-    // MANUALLY ADDED: The Explicit Iteration Loop
+    // Explicit Iteration Loop - Starts at the resumed index!
     for (
-      let chunkStart = 0;
+      let chunkStart = startingIndex;
       chunkStart < rawFindings.length;
       chunkStart += CHUNK_SIZE
     ) {
@@ -220,7 +227,6 @@ export const claudeService = {
         `\n[CLAUDE_CHUNK_${chunkNumber}] Transmitting findings ${chunkStart + 1} to ${Math.min(chunkStart + CHUNK_SIZE, rawFindings.length)} to ${model}...\n`,
       );
 
-      // Map payload strictly for this specific chunk, but preserve absolute reference_id mapping
       const structuredPayload = currentChunkFindings.map(
         (finding, localIndex) => {
           const absoluteIndex = chunkStart + localIndex;
@@ -245,242 +251,167 @@ export const claudeService = {
         - how_to_fix: Concrete code/configuration remediation.
       `;
 
-      try {
-        const response = await anthropic.messages.create({
-          model,
-          max_tokens: 8192,
-          system: contextualSystemBaseInstruction,
-          messages: [{ role: "user", content: runtimePrompt }],
-        });
+      // --- THE EXPONENTIAL BACKOFF RETRY BLOCK ---
+      let attempt = 0;
+      const MAX_RETRIES = 5;
+      const BASE_DELAY_MS = 15000; // 15 seconds
+      let aiResultsArray: BulkClaudeFindingResponse[] | null = null;
+      let totalTokens = 0,
+        promptTokens = 0,
+        completionTokens = 0;
 
-        const promptTokens = response.usage.input_tokens;
-        const completionTokens = response.usage.output_tokens;
-        const totalTokens = promptTokens + completionTokens;
-
-        process.stdout.write(
-          `[CLAUDE_CHUNK_${chunkNumber}_SUCCESS] Cost: ${totalTokens} tokens. Saving chunk token metrics...\n`,
-        );
-
-        await pool.query(
-          `
-          INSERT INTO ai_token_logs (admin_id, model_used, prompt_tokens, completion_tokens, total_tokens, action_type)
-          VALUES ($1, $2, $3, $4, $5, $6);
-        `,
-          [
-            adminId,
+      while (attempt <= MAX_RETRIES) {
+        try {
+          const response = await anthropic.messages.create({
             model,
-            promptTokens,
-            completionTokens,
-            totalTokens,
-            scanType === "url" ? "URL_SCAN" : "REPO_SCAN",
+            max_tokens: 8192,
+            system: contextualSystemBaseInstruction,
+            messages: [{ role: "user", content: runtimePrompt }],
+          });
+
+          promptTokens = response.usage.input_tokens;
+          completionTokens = response.usage.output_tokens;
+          totalTokens = promptTokens + completionTokens;
+
+          const textBlock = response.content.find(
+            (block) => block.type === "text",
+          );
+          if (!textBlock || !("text" in textBlock)) {
+            throw new Error("AI returned an empty or invalid response string.");
+          }
+
+          let cleanJsonText = textBlock.text.trim();
+          if (cleanJsonText.startsWith("```json")) {
+            cleanJsonText = cleanJsonText
+              .replace(/^```json/, "")
+              .replace(/```$/, "")
+              .trim();
+          }
+
+          // JSON Parsing Guard
+          try {
+            aiResultsArray = JSON.parse(
+              cleanJsonText,
+            ) as BulkClaudeFindingResponse[];
+            break; // SUCCESS! Break out of the retry while-loop.
+          } catch (parseErr: any) {
+            process.stderr.write(
+              `[CLAUDE_PARSE_FAIL] Invalid JSON returned. Attempting retry...\n`,
+            );
+            throw new Error(`Invalid JSON format: ${parseErr.message}`);
+          }
+        } catch (aiErr: any) {
+          attempt++;
+          const httpStatus = aiErr?.status ?? aiErr?.response?.status ?? null;
+          const errorType =
+            aiErr?.error?.type ?? aiErr?.error?.error?.type ?? null;
+          const errMsgLower = String(aiErr?.message || "").toLowerCase();
+
+          // Define what is retryable for Anthropic
+          const isRateLimit =
+            httpStatus === 429 || errorType === "rate_limit_error";
+          const isOverloaded =
+            httpStatus === 529 || errorType === "overloaded_error";
+          const isServerError =
+            (typeof httpStatus === "number" && httpStatus >= 500) ||
+            errorType === "api_error";
+          const isNetworkError = [
+            "ECONNREFUSED",
+            "ENOTFOUND",
+            "ETIMEDOUT",
+            "AbortError",
+          ].includes(aiErr?.code || aiErr?.name);
+          const isJsonParseError = errMsgLower.includes("invalid json");
+
+          if (
+            (isRateLimit ||
+              isOverloaded ||
+              isServerError ||
+              isNetworkError ||
+              isJsonParseError) &&
+            attempt <= MAX_RETRIES
+          ) {
+            // Exponential backoff: 15s, 30s, 60s, 120s, 240s
+            const backoffMs = BASE_DELAY_MS * Math.pow(2, attempt - 1);
+            process.stdout.write(
+              `[CLAUDE_RETRY_WARNING] Chunk ${chunkNumber} failed (${isRateLimit ? "429 Rate Limit" : "Error"}). Retrying in ${backoffMs / 1000}s... (Attempt ${attempt}/${MAX_RETRIES})\n`,
+            );
+            await setTimeout(backoffMs);
+            continue; // Spin the while loop again
+          }
+
+          // If we hit MAX_RETRIES or it's a fatal non-retryable error (e.g. 401 Auth, 403 Forbidden)
+          process.stderr.write(
+            `[CLAUDE_CHUNK_FATAL] reportId=${reportId} chunk=${chunkNumber} status=${httpStatus} type=${errorType} | ${aiErr?.message || "no message"}\n`,
+          );
+          process.stderr.write(
+            `[RAW_ERROR_DUMP] ${JSON.stringify(aiErr, Object.getOwnPropertyNames(aiErr), 2)}\n`,
+          );
+
+          await pool.query(
+            `UPDATE scan_reports SET status = 'failed', engine_warnings = array_append(engine_warnings, $1), updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+            [
+              `Claude Engine Fatal Error after ${attempt} attempts: ${aiErr?.message?.substring(0, 200)}`,
+              reportId,
+            ],
+          );
+
+          return; // Kill the entire background worker
+        }
+      } // End of Retry While-Loop
+
+      process.stdout.write(
+        `[CLAUDE_CHUNK_${chunkNumber}_SUCCESS] Cost: ${totalTokens} tokens. Writing ${aiResultsArray!.length} findings to DB...\n`,
+      );
+
+      await pool.query(
+        `INSERT INTO ai_token_logs (admin_id, model_used, prompt_tokens, completion_tokens, total_tokens, action_type) VALUES ($1, $2, $3, $4, $5, $6);`,
+        [
+          adminId,
+          model,
+          promptTokens,
+          completionTokens,
+          totalTokens,
+          scanType === "url" ? "URL_SCAN" : "REPO_SCAN",
+        ],
+      );
+
+      const returnedReferenceIds = new Set<number>();
+      for (const aiResult of aiResultsArray!) {
+        const originalRawFinding = rawFindings[aiResult.reference_id];
+        if (!originalRawFinding) continue;
+
+        returnedReferenceIds.add(aiResult.reference_id);
+        await pool.query(
+          `INSERT INTO scan_findings (report_id, file_path, vulnerability_name, severity, code_snippet, ai_explanation, how_to_trigger, ai_fix_suggestion) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);`,
+          [
+            reportId,
+            originalRawFinding.file_path,
+            originalRawFinding.vulnerability_name,
+            originalRawFinding.severity,
+            originalRawFinding.code_snippet,
+            aiResult.explanation,
+            aiResult.how_to_trigger,
+            aiResult.how_to_fix,
           ],
         );
+      }
 
-        const textBlock = response.content.find(
-          (block) => block.type === "text",
-        );
-        if (!textBlock || !("text" in textBlock)) {
-          throw new Error(
-            "AI completed but returned an empty or invalid response string.",
-          );
-        }
+      // MANUALLY ADDED: Increment completed_chunks in DB directly after the write finishes
+      await pool.query(
+        `UPDATE scan_reports SET completed_chunks = completed_chunks + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+        [reportId],
+      );
 
-        let cleanJsonText = textBlock.text.trim();
-        if (cleanJsonText.startsWith("```json")) {
-          cleanJsonText = cleanJsonText
-            .replace(/^```json/, "")
-            .replace(/```$/, "")
-            .trim();
-        }
-
-        let aiResultsArray: BulkClaudeFindingResponse[];
-        try {
-          aiResultsArray = JSON.parse(
-            cleanJsonText,
-          ) as BulkClaudeFindingResponse[];
-        } catch (parseErr: any) {
-          process.stderr.write(
-            `[CLAUDE_RESPONSE_PARSE_FAIL] reportId=${reportId} provider=claude model=${model} | ${parseErr?.constructor?.name || "SyntaxError"}: ${parseErr?.message}\n` +
-              `[CLAUDE_RESPONSE_PARSE_FAIL] First 500 chars of returned text: ${cleanJsonText.substring(0, 500)}\n`,
-          );
-          await pool.query(
-            `
-            UPDATE scan_reports
-            SET status = 'failed',
-                engine_warnings = array_append(engine_warnings, $1),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = $2
-          `,
-            [
-              `Claude chunk ${chunkNumber} returned a response that wasn't valid JSON. This is intermittent — please retry the scan. (parser said: ${parseErr?.message?.substring(0, 200)})`,
-              reportId,
-            ],
-          );
-          // Stop execution entirely if a chunk fundamentally breaks
-          return;
-        }
-
+      // Standard Rate Limit Sleep (If not the last chunk)
+      if (chunkNumber < totalChunks) {
         process.stdout.write(
-          `[CLAUDE_DB_WRITE] Writing ${aiResultsArray.length} findings from Chunk ${chunkNumber} to DB...\n`,
+          `[CLAUDE_RATE_LIMIT] Chunk ${chunkNumber} complete. Sleeping 61s for token refresh...\n`,
         );
-
-        const returnedReferenceIds = new Set<number>();
-        for (const aiResult of aiResultsArray) {
-          const originalRawFinding = rawFindings[aiResult.reference_id];
-          if (!originalRawFinding) {
-            process.stderr.write(
-              `[CLAUDE_REF_ID_INVALID] reportId=${reportId} reference_id=${aiResult.reference_id} not present in input findings. Skipping.\n`,
-            );
-            continue;
-          }
-          returnedReferenceIds.add(aiResult.reference_id);
-
-          await pool.query(
-            `
-            INSERT INTO scan_findings (
-              report_id, file_path, vulnerability_name, severity,
-              code_snippet, ai_explanation, how_to_trigger, ai_fix_suggestion
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
-          `,
-            [
-              reportId,
-              originalRawFinding.file_path,
-              originalRawFinding.vulnerability_name,
-              originalRawFinding.severity,
-              originalRawFinding.code_snippet,
-              aiResult.explanation,
-              aiResult.how_to_trigger,
-              aiResult.how_to_fix,
-            ],
-          );
-        }
-
-        // Detect dropped findings for this specific chunk
-        const droppedFindings: string[] = [];
-        for (
-          let i = chunkStart;
-          i < chunkStart + currentChunkFindings.length;
-          i++
-        ) {
-          if (!returnedReferenceIds.has(i)) {
-            const dropped = rawFindings[i];
-            if (dropped) {
-              droppedFindings.push(
-                `${dropped.vulnerability_name} @ ${dropped.file_path}`,
-              );
-            }
-          }
-        }
-        if (droppedFindings.length > 0) {
-          process.stdout.write(
-            `[CLAUDE_FINDINGS_DROPPED] Chunk ${chunkNumber} dropped ${droppedFindings.length} items: ${droppedFindings.join("; ").substring(0, 400)}\n`,
-          );
-          await pool.query(
-            `
-            UPDATE scan_reports
-            SET engine_warnings = array_append(engine_warnings, $1),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = $2
-          `,
-            [
-              `Chunk ${chunkNumber} dropped ${droppedFindings.length} item(s) without analysis: ${droppedFindings.slice(0, 5).join("; ")}${droppedFindings.length > 5 ? "; ..." : ""}`,
-              reportId,
-            ],
-          );
-        }
-
-        // MANUALLY ADDED: Increment completed_chunks in DB directly after the write finishes
-        await pool.query(
-          `UPDATE scan_reports SET completed_chunks = completed_chunks + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-          [reportId],
-        );
-
-        // MANUALLY ADDED: The 60 second Rate Limit Sleep (If not the last chunk)
-        if (chunkNumber < totalChunks) {
-          process.stdout.write(
-            `[CLAUDE_RATE_LIMIT] Chunk ${chunkNumber} of ${totalChunks} complete. Sleeping thread for 61 seconds to refresh Free Tier token bucket...\n`,
-          );
-          await setTimeout(61000);
-        }
-      } catch (aiErr: any) {
-        const httpStatus = aiErr?.status ?? aiErr?.response?.status ?? null;
-        const errorType =
-          aiErr?.error?.type ?? aiErr?.error?.error?.type ?? null;
-        const isSdkApiError =
-          aiErr?.constructor?.name === "APIError" ||
-          (aiErr?.constructor?.name?.endsWith("Error") &&
-            typeof httpStatus === "number");
-
-        let category = "UNKNOWN";
-        let userFacingHint = `Unexpected failure during Claude chunk processing: ${aiErr?.message || "no message"}`;
-
-        if (httpStatus === 401 || errorType === "authentication_error") {
-          category = "AUTH_FAILED";
-          userFacingHint =
-            "Claude API key is invalid or revoked. The server administrator needs to rotate ANTHROPIC_API_KEY.";
-        } else if (httpStatus === 403 || errorType === "permission_error") {
-          category = "PERMISSION_DENIED";
-          userFacingHint = `Your Anthropic account doesn't have access to the model "${model}". Try a different model (e.g. Sonnet 4.6), or upgrade your plan.`;
-        } else if (httpStatus === 404 || errorType === "not_found_error") {
-          category = "MODEL_NOT_FOUND";
-          userFacingHint = `Anthropic doesn't recognize the model "${model}". Pick a different model from the picker — the server config may be out of date.`;
-        } else if (httpStatus === 429 || errorType === "rate_limit_error") {
-          category = "RATE_LIMITED";
-          userFacingHint =
-            "Claude is currently rate-limiting requests on this API key. Wait ~60 seconds and retry, or switch to a smaller model (Haiku) for now.";
-        } else if (
-          httpStatus === 400 ||
-          errorType === "invalid_request_error"
-        ) {
-          category = "BAD_REQUEST";
-          userFacingHint = `Anthropic rejected the request as malformed: ${aiErr?.message?.substring(0, 200) || "no detail"}. This is usually a server bug — please report it.`;
-        } else if (httpStatus === 529 || errorType === "overloaded_error") {
-          category = "OVERLOADED";
-          userFacingHint =
-            "Claude is overloaded right now (529). This is on Anthropic's end — wait a minute and retry.";
-        } else if (
-          (typeof httpStatus === "number" && httpStatus >= 500) ||
-          errorType === "api_error"
-        ) {
-          category = "PROVIDER_5XX";
-          userFacingHint =
-            "Anthropic's API returned a 5xx server error. Not your fault — retry in a minute.";
-        } else if (
-          aiErr?.code === "ECONNREFUSED" ||
-          aiErr?.code === "ENOTFOUND" ||
-          aiErr?.code === "ETIMEDOUT" ||
-          aiErr?.name === "AbortError"
-        ) {
-          category = "NETWORK";
-          userFacingHint =
-            "Couldn't reach Anthropic's API (network error). Check the server's internet connection and retry.";
-        }
-
-        process.stderr.write(
-          `[CLAUDE_CHUNK_CRASH] reportId=${reportId} chunk=${chunkNumber} category=${category} status=${httpStatus} type=${errorType} sdkClass=${aiErr?.constructor?.name || "n/a"} isSdkApiError=${isSdkApiError} | ${aiErr?.message || "no message"}\nStack: ${aiErr?.stack || "no stack"}\n`,
-        );
-        // EXPLICIT ERROR DUMP
-        process.stderr.write(
-          `[RAW_ERROR_DUMP] ${JSON.stringify(aiErr, Object.getOwnPropertyNames(aiErr), 2)}\n`,
-        );
-
-        await pool.query(
-          `
-          UPDATE scan_reports
-          SET status = 'failed',
-              engine_warnings = array_append(engine_warnings, $1),
-              updated_at = CURRENT_TIMESTAMP
-          WHERE id = $2
-        `,
-          [userFacingHint, reportId],
-        );
-
-        // Break the loop entirely to stop processing remaining chunks
-        return;
+        await setTimeout(61000);
       }
     } // End of Manual Loop
 
-    // If loop successfully completes entirely, flip main status to completed
     process.stdout.write(
       `[BACKGROUND_WORKER_SUCCESS] Scan ID ${reportId} processed all chunks successfully in ${Date.now() - aiStartTime}ms.\n`,
     );

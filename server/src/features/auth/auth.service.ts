@@ -1,3 +1,4 @@
+//src/features/auth/auth.service.ts
 import { pool } from "../../db/psql.js";
 
 export const authService = {

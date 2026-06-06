@@ -1,6 +1,7 @@
+//src/components/pages/aiLab/ReportDetails.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import {
   useGetReportQuery,
@@ -28,6 +29,8 @@ export default function ReportDetails({
 }: ReportDetailsProps) {
   const [pollInterval, setPollInterval] = useState<number>(3000);
   const [page, setPage] = useState(1);
+  const [now, setNow] = useState<number>(Date.now());
+  const [groupSimilar, setGroupSimilar] = useState<boolean>(false);
 
   const [downloadStatus, setDownloadStatus] = useState<
     "idle" | "success" | "error"
@@ -93,6 +96,58 @@ export default function ReportDetails({
       setPollInterval(0);
     }
   }, [pollingError]);
+
+  useEffect(() => {
+    if (!isScanRunning) return;
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, [isScanRunning]);
+
+  const totalChunks = activeReport?.total_chunks || 0;
+  const completedChunks = activeReport?.completed_chunks || 0;
+  const remainingChunks = Math.max(0, totalChunks - completedChunks);
+
+  const updatedAtTime = activeReport?.updated_at
+    ? new Date(activeReport.updated_at).getTime()
+    : now;
+
+  const secondsSinceUpdate = Math.max(
+    0,
+    Math.floor((now - updatedAtTime) / 1000),
+  );
+
+  const isRetrying = secondsSinceUpdate > 85;
+
+  const estimatedSecondsLeft = Math.max(
+    0,
+    remainingChunks * 76 - secondsSinceUpdate,
+  );
+  const displayMinutes = Math.floor(estimatedSecondsLeft / 60);
+  const displaySeconds = estimatedSecondsLeft % 60;
+
+  const displayedFindings = useMemo(() => {
+    if (!groupSimilar || !activeFindings || activeFindings.length === 0) {
+      return activeFindings;
+    }
+
+    const groupedMap = new Map();
+
+    activeFindings.forEach((finding: any) => {
+      const key = finding.vulnerability_name;
+
+      if (groupedMap.has(key)) {
+        const existing = groupedMap.get(key);
+
+        if (!existing.file_path.includes(finding.file_path)) {
+          existing.file_path += `, ${finding.file_path}`;
+        }
+      } else {
+        groupedMap.set(key, { ...finding });
+      }
+    });
+
+    return Array.from(groupedMap.values());
+  }, [activeFindings, groupSimilar]);
 
   const handleDownloadPdf = async () => {
     setDownloadStatus("idle");
@@ -233,22 +288,53 @@ export default function ReportDetails({
             <FunFactLoader
               engine={engine}
               title={
-                (activeReport?.total_chunks ?? 0) > 0
-                  ? `Analyzing code... (Processed Chunk ${activeReport?.completed_chunks ?? 0} of ${activeReport?.total_chunks ?? 0})`
+                totalChunks > 0
+                  ? `Analyzing code... (Processed Chunk ${completedChunks} of ${totalChunks})`
                   : "Resolving target and generating AST payload..."
               }
             />
 
-            {/* The 60-Second Sleep Indicator */}
-            {(activeReport?.total_chunks ?? 0) >
-              (activeReport?.completed_chunks ?? 0) && (
-              <div className="border-3 border-double border-primary text-primary bg-primary/10 p-4 text-xs font-bold text-center animate-pulse flex flex-col gap-1">
-                <span>[ AI ENGINE RATE LIMIT PROTOCOL ACTIVE ]</span>
-                <span className="opacity-80">
-                  Processing chunk {(activeReport?.completed_chunks ?? 0) + 1}.
-                  The AI thread will sleep for 60 seconds between chunks to
-                  bypass free-tier rate limits. Do not close this page.
-                </span>
+            {totalChunks > 0 && remainingChunks > 0 && (
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between text-xs font-bold border-3 border-double p-3 bg-background">
+                  <span>ESTIMATED TIME REMAINING:</span>
+                  <span
+                    className={cn(
+                      isRetrying
+                        ? "text-yellow-500 animate-pulse"
+                        : "text-primary",
+                    )}
+                  >
+                    {estimatedSecondsLeft > 0
+                      ? `~${displayMinutes}m ${displaySeconds}s`
+                      : "Finalizing execution..."}
+                  </span>
+                </div>
+
+                {/* DYNAMIC BACKEND STATE INDICATOR */}
+                {isRetrying ? (
+                  <div className="border-3 border-double border-yellow-500 text-yellow-500 bg-yellow-500/10 p-4 text-xs font-bold animate-pulse flex flex-col gap-1">
+                    <span>[ AI PROVIDER OVERLOADED / RATE LIMITED ]</span>
+                    <span className="opacity-80">
+                      The AI API is struggling to respond. Our backend worker
+                      has caught the failure and is currently running an
+                      exponential backoff retry loop. Do not close this page—the
+                      system is self-healing.
+                    </span>
+                    <span className="opacity-60 mt-2 font-mono text-[10px]">
+                      Time elapsed on current chunk: {secondsSinceUpdate}s
+                    </span>
+                  </div>
+                ) : (
+                  <div className="border-3 border-double border-primary text-primary bg-primary/10 p-4 text-xs font-bold text-center flex flex-col gap-1">
+                    <span>[ API RATE LIMIT PROTOCOL ACTIVE ]</span>
+                    <span className="opacity-80">
+                      Processing chunk {completedChunks + 1}. The AI thread
+                      sleeps for ~60 seconds between chunks to bypass free-tier
+                      rate limits securely.
+                    </span>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -313,8 +399,25 @@ export default function ReportDetails({
               </div>
             ) : (
               <div className="flex flex-col gap-4">
+                {/* NEW: GROUPING TOGGLE BAR */}
+                <div className="flex items-center justify-between border-3 border-double bg-background p-3">
+                  <span className="text-xs font-bold">VIEW MODE:</span>
+                  <button
+                    onClick={() => setGroupSimilar(!groupSimilar)}
+                    className={cn(
+                      "border-3 border-double px-3 py-1 text-xs font-bold transition-colors",
+                      groupSimilar
+                        ? "bg-primary text-primary-foreground"
+                        : "hover:bg-primary hover:text-primary-foreground",
+                    )}
+                  >
+                    {groupSimilar ? "[ GROUPED BY TYPE ]" : "[ RAW FINDINGS ]"}
+                  </button>
+                </div>
+
                 <div className="grid grid-cols-1 gap-4">
-                  {activeFindings.map((finding: any) => (
+                  {/* Map over the new displayedFindings array instead of activeFindings */}
+                  {displayedFindings.map((finding: any) => (
                     <VulnerabilityCard
                       key={finding.id}
                       finding={finding}

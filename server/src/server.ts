@@ -6,6 +6,7 @@ import { connectWithRetry, pool } from "./db/psql.js";
 import { connectRedis } from "./db/redis.js";
 import { verifyCloudinary } from "./db/cloudinary.js";
 import { startTokenCleanupWorker } from "./workers/tokenCleanup.js";
+import { zombieRecoveryService } from "./features/ai/core-scanners/zombieRecovery.service.js";
 const PORT = process.env["PORT"] || "5000";
 const HOST = process.env["HOST"] || "0.0.0.0";
 
@@ -75,7 +76,9 @@ const startServer = async () => {
     await connectWithRetry();
     await connectRedis();
     startTokenCleanupWorker();
-
+    zombieRecoveryService.resumeZombies().catch((err) => {
+      console.error(`🫩  Failed to start Zombie Sweeper: ${err.message}`);
+    });
     server.listen(parseInt(PORT, 10), HOST, () => {
       console.log(`🥹  Server listening on http://${HOST}:${PORT}`);
     });

@@ -1,3 +1,4 @@
+//src/lib/features/ai/claude/claudeTypes.ts
 export type SeverityLevel = "Low" | "Medium" | "High" | "Critical";
 export type ScanStatus = "pending" | "processing" | "completed" | "failed";
 

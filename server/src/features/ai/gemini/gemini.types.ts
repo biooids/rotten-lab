@@ -1,3 +1,4 @@
+//src/features/ai/gemini/gemini.types.ts
 export type GeminiModelId =
   | "gemini-2.5-pro"
   | "gemini-2.5-flash"
