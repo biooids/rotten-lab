@@ -98,6 +98,22 @@ export const claudeApiSlice = createApi({
         { type: "ClaudeChat", id: findingId },
       ],
     }),
+
+    // --- ADDED: TELEMETRY PING ---
+    testClaudeConnection: builder.mutation<
+      {
+        success: boolean;
+        latencyMs: number;
+        source: string;
+        aiResponse: string; // <-- ADD THIS
+      },
+      void
+    >({
+      query: () => ({
+        url: "/ai/claude/test-connection",
+        method: "GET",
+      }),
+    }),
   }),
 });
 
@@ -109,4 +125,5 @@ export const {
   useDownloadClaudeReportPdfMutation,
   useGetClaudeChatHistoryQuery,
   useSendClaudeChatMessageMutation,
+  useTestClaudeConnectionMutation,
 } = claudeApiSlice;

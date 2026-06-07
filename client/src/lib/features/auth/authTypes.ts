@@ -6,6 +6,10 @@ export interface User {
   id: string;
   username: string;
   role: UserRole;
+  // MODIFIED: Added boolean flags to track if the user has saved custom BYOK API keys
+  // We use booleans instead of raw strings to prevent exposing secret keys in the frontend state.
+  hasGeminiKey?: boolean;
+  hasClaudeKey?: boolean;
   created_at?: string;
   updated_at?: string;
 }

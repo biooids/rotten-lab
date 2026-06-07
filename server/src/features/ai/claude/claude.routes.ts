@@ -13,6 +13,14 @@ export const claudeRoutes = async ({
 }): Promise<boolean> => {
   // Guard clause: Exit instantly if not a Claude route
   if (!pathname.startsWith("/api/v1/ai/claude")) return false;
+  // Route: GET /api/v1/ai/claude/test-connection
+  if (
+    pathname === "/api/v1/ai/claude/test-connection" &&
+    req.method === "GET"
+  ) {
+    await claudeController.testConnection(req, res);
+    return true;
+  }
 
   // Route: POST /api/v1/ai/claude/scan-url (Starts Async Job)
   if (pathname === "/api/v1/ai/claude/scan-url" && req.method === "POST") {

@@ -1,4 +1,3 @@
-// src/components/pages/auth/me/Me.tsx
 "use client";
 
 import React, { useState, useEffect } from "react";
@@ -15,6 +14,8 @@ import {
   useDeleteAccountMutation,
   useLogoutMutation,
 } from "@/lib/features/auth/authApiSlice";
+import { useTestGeminiConnectionMutation } from "@/lib/features/ai/gemini/geminiApiSlice";
+import { useTestClaudeConnectionMutation } from "@/lib/features/ai/claude/claudeApiSlice";
 import {
   updateSchema,
   changePasswordSchema,
@@ -34,6 +35,8 @@ import {
   Check,
   LogOut,
   ShieldAlert,
+  Server,
+  Activity,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import AuthGuard from "@/components/shared/AuthGuard";
@@ -56,10 +59,30 @@ export default function Me() {
   const [deleteAccount, { isLoading: isDeleting }] = useDeleteAccountMutation();
   const [logoutApi] = useLogoutMutation();
 
+  const [testGemini, { isLoading: isTestingGemini }] =
+    useTestGeminiConnectionMutation();
+  const [testClaude, { isLoading: isTestingClaude }] =
+    useTestClaudeConnectionMutation();
+
   const [username, setUsername] = useState(user?.username || "");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+
+  const [geminiApiKey, setGeminiApiKey] = useState("");
+  const [claudeApiKey, setClaudeApiKey] = useState("");
+  const [showGeminiKey, setShowGeminiKey] = useState(false);
+  const [showClaudeKey, setShowClaudeKey] = useState(false);
+  const [apiKeyFormError, setApiKeyFormError] = useState("");
+
+  const [geminiStatus, setGeminiStatus] = useState<{
+    type: "idle" | "success" | "error";
+    text: string;
+  }>({ type: "idle", text: "" });
+  const [claudeStatus, setClaudeStatus] = useState<{
+    type: "idle" | "success" | "error";
+    text: string;
+  }>({ type: "idle", text: "" });
 
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
@@ -71,6 +94,21 @@ export default function Me() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [profileFormError, setProfileFormError] = useState("");
   const [passwordFormError, setPasswordFormError] = useState("");
+
+  // TRACK TARGETED BUTTON STATES
+  const [updatingTarget, setUpdatingTarget] = useState<
+    "profile" | "keys" | "clear-gemini" | "clear-claude" | null
+  >(null);
+
+  // GLOBAL UI LOCKOUT
+  const isAnyLoading =
+    isUpdatingProfile ||
+    isChangingPassword ||
+    isDeleting ||
+    isTestingGemini ||
+    isTestingClaude;
+
+  const isAdmin = user?.role === "admin" || user?.role === "super_admin";
 
   useEffect(() => {
     if (user && !isEditingOther) setUsername(user.username);
@@ -112,12 +150,10 @@ export default function Me() {
 
   const handleLogout = async () => {
     try {
-      // Await backend response strictly so Set-Cookie Max-Age=0 registers in browser
       await logoutApi().unwrap();
     } catch {
       /* ignored */
     } finally {
-      // Regardless of network status, clear local RAM and boot user
       dispatch(logoutAction());
       router.push("/auth");
     }
@@ -132,6 +168,8 @@ export default function Me() {
       );
       return;
     }
+
+    setUpdatingTarget("profile");
     try {
       const result = await updateAccount({
         username,
@@ -147,13 +185,7 @@ export default function Me() {
           : "Profile updated successfully.",
       );
     } catch (err: any) {
-      // The server now sends 409 + { error, field: "username", code: "USERNAME_TAKEN" }
-      // when the target name is already used. Still surface as inline form error here
-      // because this single form only has one field — the message is already specific.
-      if (
-        err.status === 409 &&
-        err.data?.code === "USERNAME_TAKEN"
-      ) {
+      if (err.status === 409 && err.data?.code === "USERNAME_TAKEN") {
         setProfileFormError(
           err.data?.error || "Username already taken. Pick a different one.",
         );
@@ -164,6 +196,72 @@ export default function Me() {
       } else {
         setProfileFormError(err.data?.error || "Failed to update profile.");
       }
+    } finally {
+      setUpdatingTarget(null);
+    }
+  };
+
+  const handleUpdateApiKeys = async () => {
+    setApiKeyFormError("");
+    const payload: any = { id: targetId || undefined };
+    let hasUpdates = false;
+
+    if (geminiApiKey.trim()) {
+      payload.geminiApiKey = geminiApiKey.trim();
+      hasUpdates = true;
+    }
+    if (claudeApiKey.trim()) {
+      payload.claudeApiKey = claudeApiKey.trim();
+      hasUpdates = true;
+    }
+
+    if (!hasUpdates) {
+      setApiKeyFormError("Please enter a key to update.");
+      return;
+    }
+
+    setUpdatingTarget("keys");
+    try {
+      const result = await updateAccount(payload).unwrap();
+      if (!isEditingOther) {
+        dispatch(updateUser(result.user));
+      }
+      setGeminiApiKey("");
+      setClaudeApiKey("");
+      setGeminiStatus({ type: "idle", text: "" });
+      setClaudeStatus({ type: "idle", text: "" });
+      flashSuccess("API configuration updated successfully.");
+    } catch (err: any) {
+      setApiKeyFormError(err.data?.error || "Failed to update API keys.");
+    } finally {
+      setUpdatingTarget(null);
+    }
+  };
+
+  const handleClearApiKey = async (engine: "gemini" | "claude") => {
+    setApiKeyFormError("");
+    const payload: any = { id: targetId || undefined };
+
+    if (engine === "gemini") {
+      payload.geminiApiKey = "";
+      setGeminiStatus({ type: "idle", text: "" });
+    }
+    if (engine === "claude") {
+      payload.claudeApiKey = "";
+      setClaudeStatus({ type: "idle", text: "" });
+    }
+
+    setUpdatingTarget(engine === "gemini" ? "clear-gemini" : "clear-claude");
+    try {
+      const result = await updateAccount(payload).unwrap();
+      if (!isEditingOther) {
+        dispatch(updateUser(result.user));
+      }
+      flashSuccess(`${engine.toUpperCase()} key removed securely.`);
+    } catch (err: any) {
+      setApiKeyFormError(err.data?.error || `Failed to remove ${engine} key.`);
+    } finally {
+      setUpdatingTarget(null);
     }
   };
 
@@ -216,6 +314,38 @@ export default function Me() {
       }
     } catch {
       setError("Failed to delete user.");
+    }
+  };
+
+  const handleTestGemini = async () => {
+    setGeminiStatus({ type: "idle", text: "" });
+    try {
+      const res = await testGemini().unwrap();
+      setGeminiStatus({
+        type: "success",
+        text: `Gemini response: "${res.aiResponse}" [via ${res.source}, ${res.latencyMs}ms]`,
+      });
+    } catch (err: any) {
+      setGeminiStatus({
+        type: "error",
+        text: err.data?.details || err.data?.error || "Authentication failed.",
+      });
+    }
+  };
+
+  const handleTestClaude = async () => {
+    setClaudeStatus({ type: "idle", text: "" });
+    try {
+      const res = await testClaude().unwrap();
+      setClaudeStatus({
+        type: "success",
+        text: `Claude response: "${res.aiResponse}" [via ${res.source}, ${res.latencyMs}ms]`,
+      });
+    } catch (err: any) {
+      setClaudeStatus({
+        type: "error",
+        text: err.data?.details || err.data?.error || "Authentication failed.",
+      });
     }
   };
 
@@ -284,6 +414,7 @@ export default function Me() {
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="protocols_farmer"
                 className="border-3 border-double rounded-none text-xs"
+                disabled={isAnyLoading}
               />
               {fieldErrors.username && (
                 <p className="text-xs text-destructive font-bold">
@@ -294,12 +425,12 @@ export default function Me() {
 
             <Button
               onClick={handleUpdateProfile}
-              disabled={isUpdatingProfile}
+              disabled={isAnyLoading}
               className="border-3 border-double rounded-none w-full sm:w-fit gap-1"
             >
               <Save className="h-4 w-4" />
               <span>
-                {isUpdatingProfile
+                {isUpdatingProfile && updatingTarget === "profile"
                   ? "Saving..."
                   : isEditingOther
                     ? "Update Target Profile"
@@ -310,6 +441,219 @@ export default function Me() {
             {profileFormError && (
               <p className="text-xs text-destructive font-bold">
                 {profileFormError}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* --- API KEYS CONFIGURATION SECTION (BYOK) --- */}
+        <div className="relative border-3 border-double p-3 flex flex-col gap-3">
+          <CornerFlourish className="-top-1 -left-1" />
+          <CornerFlourish className="-bottom-1 -right-1 rotate-180" />
+
+          <div className="flex gap-1 items-center text-primary">
+            <h4 className="bg-primary text-primary-foreground font-bold p-1 w-fit text-sm">
+              AI Processing Keys (BYOK)
+            </h4>
+          </div>
+
+          <div className="border-l-3 border-double pl-3 flex flex-col gap-4">
+            <p className="text-xs font-bold opacity-80 max-w-2xl">
+              Provide your own API keys to bypass rate limits and utilize
+              premium AI models for security audits. Keys are encrypted at rest
+              and never displayed after saving.
+            </p>
+
+            {/* Gemini Input */}
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <label className="text-xs font-bold text-blue-500">
+                  Google Gemini API Key
+                </label>
+                <div className="flex gap-3 items-center">
+                  {user?.hasGeminiKey ? (
+                    <span className="text-[10px] font-bold text-primary bg-primary/10 border-3 border-double px-2">
+                      [ PERSONAL KEY ]
+                    </span>
+                  ) : isAdmin ? (
+                    <span className="text-[10px] font-bold text-primary bg-primary/10 border-3 border-double px-2">
+                      [ SYSTEM DEFAULT ]
+                    </span>
+                  ) : null}
+
+                  {(user?.hasGeminiKey || isAdmin) && (
+                    <button
+                      onClick={handleTestGemini}
+                      disabled={isAnyLoading}
+                      className="text-[10px] font-bold text-blue-500 hover:text-blue-500/80 outline-none flex items-center gap-1 uppercase disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Activity className="h-3 w-3" />
+                      {isTestingGemini ? "Pinging..." : "Test Link"}
+                    </button>
+                  )}
+
+                  {user?.hasGeminiKey && (
+                    <button
+                      onClick={() => handleClearApiKey("gemini")}
+                      disabled={isAnyLoading}
+                      className="text-[10px] font-bold text-destructive hover:underline outline-none uppercase disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
+                    >
+                      {isUpdatingProfile && updatingTarget === "clear-gemini"
+                        ? "Clearing..."
+                        : "Clear Key"}
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="relative">
+                <Input
+                  type={showGeminiKey ? "text" : "password"}
+                  value={geminiApiKey}
+                  onChange={(e) => setGeminiApiKey(e.target.value)}
+                  placeholder={
+                    user?.hasGeminiKey
+                      ? "Enter new key to overwrite existing..."
+                      : "AIzaSy..."
+                  }
+                  className="border-3 border-double rounded-none text-xs pr-10 border-blue-500/50 focus-visible:ring-blue-500"
+                  disabled={isAnyLoading}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowGeminiKey(!showGeminiKey)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-blue-500 hover:text-blue-500/70 disabled:opacity-50"
+                  tabIndex={-1}
+                  disabled={isAnyLoading}
+                >
+                  {showGeminiKey ? (
+                    <EyeOff className="h-4 w-4" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
+              {geminiStatus.text && (
+                <div
+                  className={cn(
+                    "text-[11px] font-bold mt-1 p-2 border-3 border-double flex gap-2 items-center",
+                    geminiStatus.type === "success"
+                      ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30"
+                      : "bg-destructive/10 text-destructive border-destructive/30",
+                  )}
+                >
+                  {geminiStatus.type === "success" ? (
+                    <Check className="h-3 w-3 shrink-0" />
+                  ) : (
+                    <AlertTriangle className="h-3 w-3 shrink-0" />
+                  )}
+                  <span>{geminiStatus.text}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Claude Input */}
+            <div className="flex flex-col gap-1 mt-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <label className="text-xs font-bold text-orange-500">
+                  Anthropic Claude API Key
+                </label>
+                <div className="flex gap-3 items-center">
+                  {user?.hasClaudeKey ? (
+                    <span className="text-[10px] font-bold text-primary bg-primary/10 border-3 border-double px-2">
+                      [ PERSONAL KEY ]
+                    </span>
+                  ) : isAdmin ? (
+                    <span className="text-[10px] font-bold text-primary bg-primary/10 border-3 border-double px-2">
+                      [ SYSTEM DEFAULT ]
+                    </span>
+                  ) : null}
+
+                  {(user?.hasClaudeKey || isAdmin) && (
+                    <button
+                      onClick={handleTestClaude}
+                      disabled={isAnyLoading}
+                      className="text-[10px] font-bold text-orange-500 hover:text-orange-500/80 outline-none flex items-center gap-1 uppercase disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Activity className="h-3 w-3" />
+                      {isTestingClaude ? "Pinging..." : "Test Link"}
+                    </button>
+                  )}
+
+                  {user?.hasClaudeKey && (
+                    <button
+                      onClick={() => handleClearApiKey("claude")}
+                      disabled={isAnyLoading}
+                      className="text-[10px] font-bold text-destructive hover:underline outline-none uppercase disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
+                    >
+                      {isUpdatingProfile && updatingTarget === "clear-claude"
+                        ? "Clearing..."
+                        : "Clear Key"}
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="relative">
+                <Input
+                  type={showClaudeKey ? "text" : "password"}
+                  value={claudeApiKey}
+                  onChange={(e) => setClaudeApiKey(e.target.value)}
+                  placeholder={
+                    user?.hasClaudeKey
+                      ? "Enter new key to overwrite existing..."
+                      : "sk-ant-..."
+                  }
+                  className="border-3 border-double rounded-none text-xs pr-10 border-orange-500/50 focus-visible:ring-orange-500"
+                  disabled={isAnyLoading}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowClaudeKey(!showClaudeKey)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-orange-500 hover:text-orange-500/70 disabled:opacity-50"
+                  tabIndex={-1}
+                  disabled={isAnyLoading}
+                >
+                  {showClaudeKey ? (
+                    <EyeOff className="h-4 w-4" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
+              {claudeStatus.text && (
+                <div
+                  className={cn(
+                    "text-[11px] font-bold mt-1 p-2 border-3 border-double flex gap-2 items-center",
+                    claudeStatus.type === "success"
+                      ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30"
+                      : "bg-destructive/10 text-destructive border-destructive/30",
+                  )}
+                >
+                  {claudeStatus.type === "success" ? (
+                    <Check className="h-3 w-3 shrink-0" />
+                  ) : (
+                    <AlertTriangle className="h-3 w-3 shrink-0" />
+                  )}
+                  <span>{claudeStatus.text}</span>
+                </div>
+              )}
+            </div>
+
+            <Button
+              onClick={handleUpdateApiKeys}
+              disabled={isAnyLoading}
+              className="border-3 border-double rounded-none w-full sm:w-fit gap-1 mt-1"
+            >
+              <Server className="h-4 w-4" />
+              <span>
+                {isUpdatingProfile && updatingTarget === "keys"
+                  ? "Encrypting..."
+                  : "Update Saved Keys"}
+              </span>
+            </Button>
+
+            {apiKeyFormError && (
+              <p className="text-xs text-destructive font-bold mt-1">
+                {apiKeyFormError}
               </p>
             )}
           </div>
@@ -339,12 +683,14 @@ export default function Me() {
                     onChange={(e) => setCurrentPassword(e.target.value)}
                     placeholder="Enter current password"
                     className="border-3 border-double rounded-none text-xs pr-10"
+                    disabled={isAnyLoading}
                   />
                   <button
                     type="button"
                     onClick={() => setShowCurrentPassword(!showCurrentPassword)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-primary hover:text-primary/70"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-primary hover:text-primary/70 disabled:opacity-50"
                     tabIndex={-1}
+                    disabled={isAnyLoading}
                   >
                     {showCurrentPassword ? (
                       <EyeOff className="h-4 w-4" />
@@ -372,12 +718,14 @@ export default function Me() {
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder="Min. 6 characters"
                   className="border-3 border-double rounded-none text-xs pr-10"
+                  disabled={isAnyLoading}
                 />
                 <button
                   type="button"
                   onClick={() => setShowNewPassword(!showNewPassword)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-primary hover:text-primary/70"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-primary hover:text-primary/70 disabled:opacity-50"
                   tabIndex={-1}
+                  disabled={isAnyLoading}
                 >
                   {showNewPassword ? (
                     <EyeOff className="h-4 w-4" />
@@ -403,6 +751,7 @@ export default function Me() {
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="Repeat new password"
                 className="border-3 border-double rounded-none text-xs"
+                disabled={isAnyLoading}
               />
               {fieldErrors.confirmPassword && (
                 <p className="text-xs text-destructive font-bold">
@@ -413,7 +762,7 @@ export default function Me() {
 
             <Button
               onClick={handleUpdatePassword}
-              disabled={isChangingPassword}
+              disabled={isAnyLoading}
               className="border-3 border-double rounded-none w-full sm:w-fit gap-1"
             >
               <Key className="h-4 w-4" />
@@ -456,7 +805,8 @@ export default function Me() {
               <Button
                 onClick={handleLogout}
                 variant="outline"
-                className="border-3 border-double border-destructive text-destructive rounded-none w-full sm:w-fit gap-1 hover:bg-destructive hover:text-destructive-foreground"
+                disabled={isAnyLoading}
+                className="border-3 border-double border-destructive text-destructive rounded-none w-full sm:w-fit gap-1 hover:bg-destructive hover:text-destructive-foreground disabled:opacity-50"
               >
                 <LogOut className="h-4 w-4" />
                 <span>Logout</span>
@@ -467,7 +817,8 @@ export default function Me() {
               <Button
                 onClick={() => setShowDeleteConfirm(true)}
                 variant="outline"
-                className="border-3 border-double border-destructive text-destructive rounded-none w-full sm:w-fit gap-1 hover:bg-destructive hover:text-destructive-foreground"
+                disabled={isAnyLoading}
+                className="border-3 border-double border-destructive text-destructive rounded-none w-full sm:w-fit gap-1 hover:bg-destructive hover:text-destructive-foreground disabled:opacity-50"
               >
                 <Trash2 className="h-4 w-4" />
                 <span>
@@ -482,8 +833,8 @@ export default function Me() {
                 <div className="flex gap-3">
                   <Button
                     onClick={handleDeleteUser}
-                    disabled={isDeleting}
-                    className="border-3 border-double rounded-none bg-destructive text-destructive-foreground gap-1 flex-1"
+                    disabled={isAnyLoading}
+                    className="border-3 border-double rounded-none bg-destructive text-destructive-foreground gap-1 flex-1 disabled:opacity-50"
                   >
                     <Trash2 className="h-4 w-4" />
                     <span>
@@ -497,7 +848,8 @@ export default function Me() {
                   <Button
                     onClick={() => setShowDeleteConfirm(false)}
                     variant="outline"
-                    className="border-3 border-double rounded-none"
+                    disabled={isAnyLoading}
+                    className="border-3 border-double rounded-none disabled:opacity-50"
                   >
                     Cancel
                   </Button>

@@ -13,6 +13,14 @@ export const geminiRoutes = async ({
 }): Promise<boolean> => {
   // Guard clause: Exit instantly if not a Gemini route
   if (!pathname.startsWith("/api/v1/ai/gemini")) return false;
+  // Route: GET /api/v1/ai/gemini/test-connection
+  if (
+    pathname === "/api/v1/ai/gemini/test-connection" &&
+    req.method === "GET"
+  ) {
+    await geminiController.testConnection(req, res);
+    return true;
+  }
 
   // Route: POST /api/v1/ai/gemini/scan-url (Starts Async Job)
   if (pathname === "/api/v1/ai/gemini/scan-url" && req.method === "POST") {

@@ -71,8 +71,8 @@ export default function ChatWithAI({
   }, [history, isSending]);
 
   // --- HANDLERS ---
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSendMessage = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (!message.trim() || isSending) return;
 
     setChatError("");
@@ -106,7 +106,7 @@ export default function ChatWithAI({
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSendMessage(e);
+      handleSendMessage();
     }
   };
 

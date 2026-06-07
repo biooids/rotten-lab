@@ -32,20 +32,6 @@ export default function CategoryCard() {
       detail: "simple",
     },
     {
-      title: "Computer Science",
-      icon: Monitor,
-      href: "/posts/computer-science",
-      count: posts.filter((p) => p.category === "computer-science").length,
-      detail: "simple",
-    },
-    {
-      title: "Bio-engineering",
-      icon: Dna,
-      href: "/posts/bio-engineering",
-      count: posts.filter((p) => p.category === "bio-engineering").length,
-      detail: "simple",
-    },
-    {
       title: "Projects",
       icon: FlaskConical,
       href: "/posts/projects",
@@ -59,6 +45,21 @@ export default function CategoryCard() {
         ).length,
       },
     },
+    {
+      title: "Computer Science",
+      icon: Monitor,
+      href: "/posts/computer-science",
+      count: posts.filter((p) => p.category === "computer-science").length,
+      detail: "simple",
+    },
+    {
+      title: "Bio-engineering",
+      icon: Dna,
+      href: "/posts/bio-engineering",
+      count: posts.filter((p) => p.category === "bio-engineering").length,
+      detail: "simple",
+    },
+
     {
       title: "Diary",
       icon: Dna,

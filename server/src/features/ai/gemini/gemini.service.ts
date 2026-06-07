@@ -10,16 +10,20 @@ import type {
   BulkGeminiFindingResponse,
 } from "./gemini.types.js";
 
+// MODIFIED: Changed top-level validation to act as a warning instead of a fatal exit.
+// We preserve the global environment key for Admins/Super Admins to use by default.
 const GEMINI_API_KEY = process.env["GEMINI_API_KEY"];
 
 if (!GEMINI_API_KEY) {
   process.stderr.write(
-    "FATAL RUNTIME CONFIG ERROR: GEMINI_API_KEY variable context layer unassigned.\n",
+    "[WARNING] GEMINI_API_KEY environment variable is not assigned. Default admin scans will fail unless a BYOK key is provided.\n",
   );
-  process.exit(1);
 }
 
-const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+// MODIFIED: Instantiate the global client safely (only if the environment variable exists).
+const globalGeminiClient = GEMINI_API_KEY
+  ? new GoogleGenAI({ apiKey: GEMINI_API_KEY })
+  : null;
 
 export const geminiService = {
   async initializeReport(
@@ -32,7 +36,6 @@ export const geminiService = {
       `[GEMINI_DB_INIT] Committing new parent report row with status PENDING for target: ${targetUrl} (model=${model})\n`,
     );
 
-    // MANUALLY ADDED: total_chunks and completed_chunks defaults
     const masterSql = `
       INSERT INTO scan_reports (target_url, scan_type, ai_provider, ai_model, scanned_by, status, engine_warnings, total_chunks, completed_chunks)
       VALUES ($1, $2, 'gemini', $3, $4, 'pending', '{}', 0, 0)
@@ -76,7 +79,6 @@ export const geminiService = {
         return;
       }
 
-      // MANUALLY ADDED: Calculate total chunks and save to DB before hitting the AI loop
       const calculatedTotalChunks = Math.ceil(rawVulnerabilities.length / 4);
       await pool.query(
         `UPDATE scan_reports SET status = 'processing', total_chunks = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
@@ -94,7 +96,6 @@ export const geminiService = {
       process.stderr.write(
         `[BACKGROUND_CRASH_URL] Background worker failed | reportId=${reportId} adminId=${adminId} provider=gemini model=${model} | ${err?.constructor?.name || "Error"}: ${err?.message || err}\nStack: ${err?.stack || "no stack"}\n`,
       );
-      // EXPLICIT ERROR DUMP
       process.stderr.write(
         `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
       );
@@ -138,7 +139,6 @@ export const geminiService = {
         return;
       }
 
-      // MANUALLY ADDED: Calculate total chunks and save to DB before hitting the AI loop
       const calculatedTotalChunks = Math.ceil(rawVulnerabilities.length / 4);
       await pool.query(
         `UPDATE scan_reports SET status = 'processing', total_chunks = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
@@ -157,7 +157,6 @@ export const geminiService = {
       process.stderr.write(
         `[BACKGROUND_CRASH_REPO] Git worker failed | reportId=${reportId} adminId=${adminId} provider=gemini model=${model} | ${err?.constructor?.name || "Error"}: ${err?.message || err}\nStack: ${err?.stack || "no stack"}\n`,
       );
-      // EXPLICIT ERROR DUMP
       process.stderr.write(
         `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
       );
@@ -190,12 +189,75 @@ export const geminiService = {
   ): Promise<void> {
     const aiStartTime = Date.now();
 
+    // ADDED: Bring Your Own Key (BYOK) Resolution Logic
+    // We check the DB to see if the user has a custom key, or if they are an admin allowed to use the global key.
+    let activeGeminiClient: GoogleGenAI;
+    try {
+      const encryptionKey = process.env["DB_ENCRYPTION_KEY"] as string;
+      const userKeySql = `
+        SELECT 
+          role,
+          CASE 
+            WHEN gemini_api_key IS NOT NULL AND gemini_api_key <> '' 
+            THEN pgp_sym_decrypt(dearmor(gemini_api_key), $2) 
+            ELSE NULL 
+          END AS decrypted_key
+        FROM users 
+        WHERE id = $1;
+      `;
+      const keyRes = await pool.query(userKeySql, [adminId, encryptionKey]);
+
+      if (keyRes.rows.length === 0) {
+        throw new Error(
+          `User with ID ${adminId} not found during API key resolution.`,
+        );
+      }
+
+      const userRow = keyRes.rows[0];
+
+      if (userRow.decrypted_key) {
+        // STANDARD USER (OR ADMIN OVERRIDE): Instantiate a dynamic client using their personal key
+        activeGeminiClient = new GoogleGenAI({ apiKey: userRow.decrypted_key });
+        process.stdout.write(
+          `[GEMINI_AUTH] Spawning dynamic AI client using custom BYOK for user ${adminId}.\n`,
+        );
+      } else if (userRow.role === "admin" || userRow.role === "super_admin") {
+        // ADMIN: Use the global .env client for easy access
+        if (!globalGeminiClient) {
+          throw new Error(
+            "Admin user lacks custom key, and server is missing default GEMINI_API_KEY in environment variables.",
+          );
+        }
+        activeGeminiClient = globalGeminiClient;
+        process.stdout.write(
+          `[GEMINI_AUTH] Routing to global environment AI client for admin ${adminId}.\n`,
+        );
+      } else {
+        throw new Error(
+          "Access Denied: Standard users must provide their own Gemini API key in Account Settings.",
+        );
+      }
+    } catch (keyErr: any) {
+      process.stderr.write(
+        `[GEMINI_AUTH_FATAL] Failed to resolve API key for user ${adminId}: ${keyErr?.message || keyErr}\nStack: ${keyErr?.stack || "no stack"}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(keyErr, Object.getOwnPropertyNames(keyErr), 2)}\n`,
+      );
+
+      await pool.query(
+        `UPDATE scan_reports SET status = 'failed', engine_warnings = array_append(engine_warnings, $1), updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+        [
+          `API Key Resolution Failed: ${keyErr?.message || "Unknown error"}`,
+          reportId,
+        ],
+      );
+      return;
+    }
+
     const CHUNK_SIZE = 4;
     const totalChunks = Math.ceil(rawFindings.length / CHUNK_SIZE);
 
-    // --- CRASH RECOVERY / RESUMPTION LOGIC ---
-    // If the server crashed and Redis/Queue re-triggers this job, we check the DB
-    // to see how many chunks were already completed successfully to avoid double-billing.
     const stateRes = await pool.query(
       `SELECT completed_chunks FROM scan_reports WHERE id = $1`,
       [reportId],
@@ -213,7 +275,6 @@ export const geminiService = {
       contextualSystemBaseInstruction = `${contextualSystemBaseInstruction}\n\nCRITICAL ARCHITECTURE INFORMATION: The code repository ecosystem relies heavily on the following package environment dependencies context list configuration details: ${projectContext}. You MUST structure all how_to_fix suggestions to cleanly utilize native APIs, patterns, and features belonging strictly to these framework dependency architectures instead of giving generalized vanilla textbook solution guidelines.`;
     }
 
-    // Explicit Iteration Loop - Starts at the resumed index!
     for (
       let chunkStart = startingIndex;
       chunkStart < rawFindings.length;
@@ -253,10 +314,9 @@ export const geminiService = {
         - how_to_fix: Concrete code/configuration remediation.
       `;
 
-      // --- THE EXPONENTIAL BACKOFF RETRY BLOCK ---
       let attempt = 0;
       const MAX_RETRIES = 5;
-      const BASE_DELAY_MS = 15000; // 15 seconds
+      const BASE_DELAY_MS = 15000;
       let aiResultsArray: BulkGeminiFindingResponse[] | null = null;
       let totalTokens = 0,
         promptTokens = 0,
@@ -264,7 +324,8 @@ export const geminiService = {
 
       while (attempt <= MAX_RETRIES) {
         try {
-          const response = await ai.models.generateContent({
+          // MODIFIED: Changed from 'ai.models.generateContent' to 'activeGeminiClient.models.generateContent'
+          const response = await activeGeminiClient.models.generateContent({
             model,
             contents: runtimePrompt,
             config: {
@@ -299,12 +360,11 @@ export const geminiService = {
           if (!response.text)
             throw new Error("AI returned empty response string.");
 
-          // JSON Parsing Guard
           try {
             aiResultsArray = JSON.parse(
               response.text,
             ) as BulkGeminiFindingResponse[];
-            break; // SUCCESS! Break out of the retry while-loop.
+            break;
           } catch (parseErr: any) {
             process.stderr.write(
               `[GEMINI_PARSE_FAIL] Invalid JSON returned. Attempting retry...\n`,
@@ -317,7 +377,6 @@ export const geminiService = {
           const googleStatus = aiErr?.error?.status ?? aiErr?.code ?? null;
           const errMsgLower = String(aiErr?.message || "").toLowerCase();
 
-          // Define what is retryable (Rate limits, Server Errors, Network drops)
           const isRateLimit =
             httpStatus === 429 ||
             googleStatus === "RESOURCE_EXHAUSTED" ||
@@ -341,16 +400,14 @@ export const geminiService = {
               isJsonParseError) &&
             attempt <= MAX_RETRIES
           ) {
-            // Exponential backoff: 15s, 30s, 60s, 120s, 240s
             const backoffMs = BASE_DELAY_MS * Math.pow(2, attempt - 1);
             process.stdout.write(
               `[GEMINI_RETRY_WARNING] Chunk ${chunkNumber} failed (${isRateLimit ? "429 Rate Limit" : "Error"}). Retrying in ${backoffMs / 1000}s... (Attempt ${attempt}/${MAX_RETRIES})\n`,
             );
             await setTimeout(backoffMs);
-            continue; // Spin the while loop again
+            continue;
           }
 
-          // If we hit MAX_RETRIES or it's a fatal non-retryable error (e.g. 401 Auth, 403 Forbidden)
           process.stderr.write(
             `[GEMINI_CHUNK_FATAL] reportId=${reportId} chunk=${chunkNumber} status=${httpStatus} | ${aiErr?.message || "no message"}\n`,
           );
@@ -366,11 +423,10 @@ export const geminiService = {
             ],
           );
 
-          return; // Kill the entire background worker
+          return;
         }
-      } // End of Retry While-Loop
+      }
 
-      // If we got here, aiResultsArray is guaranteed to be valid and populated
       process.stdout.write(
         `[GEMINI_CHUNK_${chunkNumber}_SUCCESS] Cost: ${totalTokens} tokens. Writing ${aiResultsArray!.length} findings to DB...\n`,
       );
@@ -408,20 +464,18 @@ export const geminiService = {
         );
       }
 
-      // MANUALLY ADDED: Increment completed_chunks in DB directly after the write finishes
       await pool.query(
         `UPDATE scan_reports SET completed_chunks = completed_chunks + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
         [reportId],
       );
 
-      // Standard Rate Limit Sleep (If not the last chunk)
       if (chunkNumber < totalChunks) {
         process.stdout.write(
           `[GEMINI_RATE_LIMIT] Chunk ${chunkNumber} complete. Sleeping 61s for token refresh...\n`,
         );
         await setTimeout(61000);
       }
-    } // End of Manual Loop
+    }
 
     process.stdout.write(
       `[BACKGROUND_WORKER_SUCCESS] Scan ID ${reportId} processed all chunks successfully in ${Date.now() - aiStartTime}ms.\n`,
@@ -558,5 +612,98 @@ export const geminiService = {
         limit,
       },
     };
+  },
+
+  async testConnection(adminId: string): Promise<any> {
+    process.stdout.write(
+      `\n[GEMINI_TEST] Initiating connection test for user ID: ${adminId}\n`,
+    );
+    const startTime = Date.now();
+    let activeGeminiClient: GoogleGenAI;
+    let source = "UNKNOWN";
+
+    try {
+      // 1. Test Database & Decryption
+      const encryptionKey = process.env["DB_ENCRYPTION_KEY"] as string;
+      const userKeySql = `
+        SELECT role,
+        CASE 
+          WHEN gemini_api_key IS NOT NULL AND gemini_api_key <> '' 
+          THEN pgp_sym_decrypt(dearmor(gemini_api_key), $2) 
+          ELSE NULL 
+        END AS decrypted_key
+        FROM users WHERE id = $1;
+      `;
+      const keyRes = await pool.query(userKeySql, [adminId, encryptionKey]);
+
+      if (keyRes.rows.length === 0) {
+        throw new Error("USER_NOT_FOUND: User does not exist in the database.");
+      }
+
+      const userRow = keyRes.rows[0];
+
+      // 2. Resolve the Key
+      if (userRow.decrypted_key) {
+        activeGeminiClient = new GoogleGenAI({ apiKey: userRow.decrypted_key });
+        source = "PERSONAL_BYOK";
+        process.stdout.write(
+          `[GEMINI_TEST] Successfully decrypted BYOK for user.\n`,
+        );
+      } else if (userRow.role === "admin" || userRow.role === "super_admin") {
+        if (!globalGeminiClient) {
+          throw new Error(
+            "SYSTEM_KEY_MISSING: Admin lacks BYOK and server lacks .env key.",
+          );
+        }
+        activeGeminiClient = globalGeminiClient;
+        source = "SYSTEM_DEFAULT";
+        process.stdout.write(
+          `[GEMINI_TEST] Using system default .env key for Admin.\n`,
+        );
+      } else {
+        throw new Error(
+          "MISSING_BYOK: Standard user has no configured API key.",
+        );
+      }
+
+      // 3. Ping the AI Model (UPDATED)
+      process.stdout.write(
+        `[GEMINI_TEST] Dispatching telemetry ping to Gemini API...\n`,
+      );
+
+      const prompt =
+        "Please respond with a very short, friendly 5-word greeting to confirm our connection is active.";
+
+      const response = await activeGeminiClient.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: prompt,
+      });
+
+      const text = response.text || "";
+
+      // If we got no text back at all, that's a failure
+      if (!text.trim()) {
+        throw new Error(`EMPTY_AI_RESPONSE: The AI returned a blank message.`);
+      }
+
+      const latencyMs = Date.now() - startTime;
+      process.stdout.write(
+        `[GEMINI_TEST_SUCCESS] Connection verified in ${latencyMs}ms using ${source}. Response: "${text.trim()}"\n`,
+      );
+
+      // We now pass the EXACT AI response back to the frontend
+      return {
+        success: true,
+        message: "Gemini AI connection established successfully.",
+        aiResponse: text.trim(),
+        latencyMs,
+        source,
+      };
+    } catch (err: any) {
+      process.stderr.write(
+        `[GEMINI_TEST_FATAL] Telemetry failed: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      throw err;
+    }
   },
 };

@@ -5,6 +5,7 @@ import jwt from "jsonwebtoken";
 import { geminiService } from "./gemini.service.js";
 import type { GeminiModelId, ScanRequestDTO } from "./gemini.types.js";
 import type { JWTPayload } from "../../auth/auth.types.js";
+import { pool } from "../../../db/psql.js"; // ADDED: Required for user role/key lookup
 
 const ACCESS_TOKEN_SECRET = process.env["ACCESS_TOKEN_SECRET"];
 const PORTFOLIO_SECRET_KEY = process.env["PORTFOLIO_SECRET_KEY"];
@@ -62,7 +63,7 @@ export const geminiController = {
       return;
     }
 
-    // --- ADDED: URL Auto-Format & Native Validation ---
+    // --- URL Auto-Format & Native Validation ---
     if (!/^https?:\/\//i.test(body.targetUrl)) {
       body.targetUrl = `https://${body.targetUrl.trim()}`;
     }
@@ -84,23 +85,54 @@ export const geminiController = {
       );
       return;
     }
-    // --- END ADDED ---
 
-    if (
-      decoded.role === "user" &&
-      body.secretAccessKey !== PORTFOLIO_SECRET_KEY
-    ) {
-      process.stderr.write(
-        `[HTTP_SHIELD] Rejected standard user due to incorrect Portfolio Key.\n`,
-      );
-      res.statusCode = 403;
-      res.end(
-        JSON.stringify({
-          error: "Access Denied: Valid Portfolio Key required.",
-        }),
-      );
-      return;
+    // --- ADDED: BYOK & ROLE AUTHORIZATION CHECK ---
+    // If the user is an admin, let them through (they use the global .env key or their BYOK).
+    // If they are a standard user, they MUST have a valid Portfolio Key AND a saved BYOK key.
+    if (decoded.role === "user") {
+      if (body.secretAccessKey !== PORTFOLIO_SECRET_KEY) {
+        process.stderr.write(
+          `[HTTP_SHIELD] Rejected standard user due to incorrect Portfolio Key.\n`,
+        );
+        res.statusCode = 403;
+        res.end(
+          JSON.stringify({
+            error: "Access Denied: Valid Portfolio Key required.",
+          }),
+        );
+        return;
+      }
+
+      // Check if the standard user has actually saved a Gemini API key
+      try {
+        const keyCheckSql = `SELECT gemini_api_key FROM users WHERE id = $1`;
+        const keyRes = await pool.query(keyCheckSql, [decoded.id]);
+
+        if (keyRes.rows.length === 0 || !keyRes.rows[0].gemini_api_key) {
+          process.stderr.write(
+            `[HTTP_SHIELD] Rejected standard user ${decoded.id}: No BYOK Gemini key configured.\n`,
+          );
+          res.statusCode = 403;
+          res.end(
+            JSON.stringify({
+              error:
+                "Access Denied: You must configure a valid Gemini API key in your Account Settings to perform scans.",
+            }),
+          );
+          return;
+        }
+      } catch (dbErr: any) {
+        process.stderr.write(
+          `[HTTP_CRASH] Failed to check user API key status: ${dbErr.message}\n`,
+        );
+        res.statusCode = 500;
+        res.end(
+          JSON.stringify({ error: "Database error during key validation." }),
+        );
+        return;
+      }
     }
+    // --- END BYOK AUTHORIZATION CHECK ---
 
     let resolvedModel: GeminiModelId = "gemini-2.5-flash";
     if (
@@ -204,7 +236,7 @@ export const geminiController = {
       return;
     }
 
-    // --- ADDED: URL Auto-Format, GitHub Verification & Native Validation ---
+    // --- URL Auto-Format, GitHub Verification & Native Validation ---
     if (!/^https?:\/\//i.test(body.targetUrl)) {
       body.targetUrl = `https://${body.targetUrl.trim()}`;
     }
@@ -235,23 +267,53 @@ export const geminiController = {
       );
       return;
     }
-    // --- END ADDED ---
 
-    if (
-      decoded.role === "user" &&
-      body.secretAccessKey !== PORTFOLIO_SECRET_KEY
-    ) {
-      process.stderr.write(
-        `[HTTP_SHIELD] Rejected standard user due to incorrect Portfolio Key.\n`,
-      );
-      res.statusCode = 403;
-      res.end(
-        JSON.stringify({
-          error: "Access Denied: Valid Portfolio Key required.",
-        }),
-      );
-      return;
+    // --- ADDED: BYOK & ROLE AUTHORIZATION CHECK ---
+    // Same check as URL scanner to ensure standard users are paying their own compute cost
+    if (decoded.role === "user") {
+      if (body.secretAccessKey !== PORTFOLIO_SECRET_KEY) {
+        process.stderr.write(
+          `[HTTP_SHIELD] Rejected standard user due to incorrect Portfolio Key.\n`,
+        );
+        res.statusCode = 403;
+        res.end(
+          JSON.stringify({
+            error: "Access Denied: Valid Portfolio Key required.",
+          }),
+        );
+        return;
+      }
+
+      // Check if the standard user has actually saved a Gemini API key
+      try {
+        const keyCheckSql = `SELECT gemini_api_key FROM users WHERE id = $1`;
+        const keyRes = await pool.query(keyCheckSql, [decoded.id]);
+
+        if (keyRes.rows.length === 0 || !keyRes.rows[0].gemini_api_key) {
+          process.stderr.write(
+            `[HTTP_SHIELD] Rejected standard user ${decoded.id}: No BYOK Gemini key configured.\n`,
+          );
+          res.statusCode = 403;
+          res.end(
+            JSON.stringify({
+              error:
+                "Access Denied: You must configure a valid Gemini API key in your Account Settings to perform scans.",
+            }),
+          );
+          return;
+        }
+      } catch (dbErr: any) {
+        process.stderr.write(
+          `[HTTP_CRASH] Failed to check user API key status: ${dbErr.message}\n`,
+        );
+        res.statusCode = 500;
+        res.end(
+          JSON.stringify({ error: "Database error during key validation." }),
+        );
+        return;
+      }
     }
+    // --- END BYOK AUTHORIZATION CHECK ---
 
     let resolvedModel: GeminiModelId = "gemini-2.5-flash";
     if (
@@ -436,6 +498,47 @@ export const geminiController = {
       res.end(
         JSON.stringify({
           error: "Internal error retrieving specific report details.",
+        }),
+      );
+    }
+  },
+
+  async testConnection(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    res.setHeader("Content-Type", "application/json");
+
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      res.statusCode = 401;
+      res.end(JSON.stringify({ error: "Unauthorized: Missing token." }));
+      return;
+    }
+
+    let decoded: JWTPayload;
+    try {
+      decoded = jwt.verify(
+        authHeader.split(" ")[1] as string,
+        ACCESS_TOKEN_SECRET as string,
+      ) as JWTPayload;
+    } catch (err: any) {
+      res.statusCode = 401;
+      res.end(JSON.stringify({ error: "Unauthorized token." }));
+      return;
+    }
+
+    try {
+      const telemetryData = await geminiService.testConnection(decoded.id);
+      res.statusCode = 200;
+      res.end(JSON.stringify(telemetryData));
+    } catch (err: any) {
+      res.statusCode = 400; // Client-side configuration error or API failure
+      res.end(
+        JSON.stringify({
+          success: false,
+          error: "Connection failed.",
+          details: err.message,
         }),
       );
     }

@@ -9,13 +9,25 @@ import type {
   ReportChatSession,
 } from "./reports.types.js";
 
+// MODIFIED: Changed top-level validation to act as warnings. We preserve the global environment keys for Admins to use by default.
 const GEMINI_API_KEY = process.env["GEMINI_API_KEY"];
 const ANTHROPIC_API_KEY = process.env["ANTHROPIC_API_KEY"];
 
-const gemini = GEMINI_API_KEY
+if (!GEMINI_API_KEY) {
+  process.stderr.write(
+    "[WARNING] GEMINI_API_KEY environment variable is not assigned. Default admin Gemini chats will fail unless a BYOK key is provided.\n",
+  );
+}
+if (!ANTHROPIC_API_KEY) {
+  process.stderr.write(
+    "[WARNING] ANTHROPIC_API_KEY environment variable is not assigned. Default admin Claude chats will fail unless a BYOK key is provided.\n",
+  );
+}
+
+const globalGeminiClient = GEMINI_API_KEY
   ? new GoogleGenAI({ apiKey: GEMINI_API_KEY })
   : null;
-const anthropic = ANTHROPIC_API_KEY
+const globalAnthropicClient = ANTHROPIC_API_KEY
   ? new Anthropic({ apiKey: ANTHROPIC_API_KEY })
   : null;
 
@@ -261,16 +273,19 @@ export const reportsService = {
     // 1. Verify Ownership & Get AI Provider
     let reportRes;
     try {
-      const reportSql = `SELECT target_url, ai_provider FROM scan_reports WHERE id = $1 AND scanned_by = $2;`;
-      reportRes = await pool.query(reportSql, [reportId, userId]);
+      const reportSql = `SELECT target_url, ai_provider, scanned_by FROM scan_reports WHERE id = $1;`;
+      reportRes = await pool.query(reportSql, [reportId]);
     } catch (err: any) {
       process.stderr.write(
-        `[FATAL_DB_ERROR] Failed resolving report ownership for report: ${reportId}, user: ${userId}. Error: ${err.message}\nStack: ${err.stack}\n`,
+        `[FATAL_DB_ERROR] Failed resolving report for report: ${reportId}. Error: ${err.message}\nStack: ${err.stack}\n`,
       );
       throw err;
     }
 
-    if (reportRes.rows.length === 0) {
+    if (
+      reportRes.rows.length === 0 ||
+      reportRes.rows[0].scanned_by !== userId
+    ) {
       process.stderr.write(
         `[CHAT_AUTH_ERROR] Report ${reportId} not found or user ${userId} does not own it.\n`,
       );
@@ -278,6 +293,60 @@ export const reportsService = {
     }
 
     const { target_url, ai_provider } = reportRes.rows[0];
+
+    // --- ADDED: BYOK & FALLBACK KEY RESOLUTION LOGIC ---
+    let activeClient: any;
+    try {
+      const encryptionKey = process.env["DB_ENCRYPTION_KEY"] as string;
+      const userKeySql = `
+        SELECT 
+          role,
+          CASE 
+            WHEN (ai_provider = 'claude' AND claude_api_key IS NOT NULL AND claude_api_key <> '') 
+                 OR (ai_provider = 'gemini' AND gemini_api_key IS NOT NULL AND gemini_api_key <> '') 
+            THEN pgp_sym_decrypt(dearmor(CASE WHEN ai_provider = 'claude' THEN claude_api_key ELSE gemini_api_key END), $2) 
+            ELSE NULL 
+          END AS decrypted_key
+        FROM users 
+        WHERE id = $1;
+      `;
+      const keyRes = await pool.query(userKeySql, [userId, encryptionKey]);
+
+      if (keyRes.rows.length === 0) {
+        throw new Error(
+          `User with ID ${userId} not found during API key resolution.`,
+        );
+      }
+
+      const userRow = keyRes.rows[0];
+
+      if (userRow.decrypted_key) {
+        process.stdout.write(
+          `[CHAT_AUTH] Spawning dynamic AI client using custom BYOK for user ${userId}.\n`,
+        );
+        activeClient =
+          ai_provider === "claude"
+            ? new Anthropic({ apiKey: userRow.decrypted_key })
+            : new GoogleGenAI({ apiKey: userRow.decrypted_key });
+      } else if (userRow.role === "admin" || userRow.role === "super_admin") {
+        process.stdout.write(
+          `[CHAT_AUTH] Routing to global environment AI client for admin ${userId}.\n`,
+        );
+        activeClient =
+          ai_provider === "claude" ? globalAnthropicClient : globalGeminiClient;
+        if (!activeClient) {
+          throw new Error("AI_CLIENT_NOT_CONFIGURED");
+        }
+      } else {
+        throw new Error("AI_CLIENT_NOT_CONFIGURED"); // Let the controller map this to a 403 or 500
+      }
+    } catch (err: any) {
+      process.stderr.write(
+        `[CHAT_AUTH_FATAL] Failed to resolve API key: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      throw err;
+    }
+    // --- END BYOK LOGIC ---
 
     // 2. Validate Model against Provider
     let finalModel = "";
@@ -362,22 +431,15 @@ export const reportsService = {
       `[CHAT_API] Dispatching prompt to ${ai_provider} (Model: ${finalModel})\n`,
     );
 
-    // 6. Route to correct provider with explicit error handling
+    // 6. Route to correct provider with explicit error handling using the activeClient
     try {
       if (ai_provider === "claude") {
-        if (!anthropic) {
-          process.stderr.write(
-            `[FATAL_CONFIG_ERROR] Anthropic client not configured in environment.\n`,
-          );
-          throw new Error("AI_CLIENT_NOT_CONFIGURED");
-        }
-
         const messages = recentHistory.map((msg) => ({
           role: msg.role === "user" ? "user" : "assistant",
           content: msg.message,
         })) as { role: "user" | "assistant"; content: string }[];
 
-        const response = await anthropic.messages.create({
+        const response = await activeClient.messages.create({
           model: finalModel,
           max_tokens: 1024,
           system: systemContext,
@@ -385,26 +447,19 @@ export const reportsService = {
         });
 
         const textBlock = response.content.find(
-          (block) => block.type === "text",
+          (block: any) => block.type === "text",
         );
         aiReplyText =
           textBlock && "text" in textBlock
             ? textBlock.text
             : "I could not generate a response.";
       } else {
-        if (!gemini) {
-          process.stderr.write(
-            `[FATAL_CONFIG_ERROR] Gemini client not configured in environment.\n`,
-          );
-          throw new Error("AI_CLIENT_NOT_CONFIGURED");
-        }
-
         const contents = recentHistory.map((msg) => ({
           role: msg.role === "user" ? "user" : "model",
           parts: [{ text: msg.message }],
         }));
 
-        const response = await gemini.models.generateContent({
+        const response = await activeClient.models.generateContent({
           model: finalModel,
           contents: contents,
           config: {

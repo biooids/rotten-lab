@@ -95,6 +95,22 @@ export const geminiApiSlice = createApi({
         { type: "GeminiChat", id: findingId },
       ],
     }),
+
+    // --- ADDED: TELEMETRY PING ---
+    testGeminiConnection: builder.mutation<
+      {
+        success: boolean;
+        latencyMs: number;
+        source: string;
+        aiResponse: string; // <-- ADD THIS
+      },
+      void
+    >({
+      query: () => ({
+        url: "/ai/gemini/test-connection",
+        method: "GET",
+      }),
+    }),
   }),
 });
 
@@ -106,4 +122,5 @@ export const {
   useDownloadGeminiReportPdfMutation,
   useGetChatHistoryQuery,
   useSendChatMessageMutation,
+  useTestGeminiConnectionMutation,
 } = geminiApiSlice;

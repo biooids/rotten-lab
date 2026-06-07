@@ -7,6 +7,8 @@ export interface User {
   username: string;
   password_hash: string;
   role: UserRole;
+  gemini_api_key?: string | null;
+  claude_api_key?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -53,4 +55,6 @@ export interface ChangePasswordDTO {
 
 export interface UpdateAccountDTO {
   username?: string;
+  geminiApiKey?: string;
+  claudeApiKey?: string;
 }

@@ -138,8 +138,13 @@ export default function ReportDetails({
       if (groupedMap.has(key)) {
         const existing = groupedMap.get(key);
 
-        if (!existing.file_path.includes(finding.file_path)) {
-          existing.file_path += `, ${finding.file_path}`;
+        const existingPath = existing.file_path || "";
+        const newPath = finding.file_path || "";
+
+        if (!existingPath.includes(newPath)) {
+          existing.file_path = existingPath
+            ? `${existingPath}, ${newPath}`
+            : newPath;
         }
       } else {
         groupedMap.set(key, { ...finding });
@@ -179,11 +184,28 @@ export default function ReportDetails({
       console.error("Failed to download PDF:", error);
       setDownloadStatus("error");
 
-      const extractedMessage =
-        error?.message ||
-        error?.data?.error ||
-        error?.data?.message ||
-        "An unknown error occurred while downloading.";
+      let extractedMessage = "An unknown error occurred while downloading.";
+
+      // Parse JSON errors that RTK Query mistakenly wrapped in a Blob
+      if (
+        error?.data instanceof Blob &&
+        error.data.type === "application/json"
+      ) {
+        try {
+          const text = await error.data.text();
+          const json = JSON.parse(text);
+          extractedMessage = json.error || json.message || extractedMessage;
+        } catch (parseErr) {
+          // Fallback to default if parsing fails
+        }
+      } else {
+        extractedMessage =
+          error?.message ||
+          error?.data?.error ||
+          error?.data?.message ||
+          extractedMessage;
+      }
+
       setDownloadErrorMsg(extractedMessage);
     }
   };

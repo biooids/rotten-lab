@@ -908,57 +908,129 @@ export const authController = {
     }
 
     try {
-      const username = body.username;
-      if (!username || username.length < 3 || username.length > 20) {
-        res.statusCode = 400;
-        res.end(JSON.stringify({ error: "Username must be 3-20 characters." }));
-        return;
+      const { username, geminiApiKey, claudeApiKey } = body;
+
+      // 1. Manually update username if provided
+      if (username) {
+        if (username.length < 3 || username.length > 20) {
+          res.statusCode = 400;
+          res.end(
+            JSON.stringify({ error: "Username must be 3-20 characters." }),
+          );
+          return;
+        }
+
+        try {
+          await authService.updateUser(username, targetId);
+        } catch (err) {
+          const pgCode = (err as any)?.code;
+          const pgConstraint = (err as any)?.constraint || "";
+
+          if (pgCode === "23505") {
+            process.stderr.write(
+              `[updateAccount] Duplicate username on rename rejected (23505) constraint=${pgConstraint} detail=${(err as any)?.detail || "n/a"}\n`,
+            );
+            res.statusCode = 409;
+            res.setHeader("Content-Type", "application/json");
+            res.end(
+              JSON.stringify({
+                error: "Username already taken. Pick a different one.",
+                field: "username",
+                code: "USERNAME_TAKEN",
+              }),
+            );
+            return;
+          }
+
+          process.stderr.write(
+            `[updateAccount] DB/Logic Error updating username code=${pgCode || "n/a"} constraint=${pgConstraint || "n/a"}: ${(err as Error).message}\nStack: ${(err as Error).stack}\n`,
+          );
+          res.statusCode = 500;
+          res.end(
+            JSON.stringify({
+              error:
+                "Failed to update username due to a server error. Please retry.",
+            }),
+          );
+          return;
+        }
       }
 
-      const result = await authService.updateUser(username, targetId);
-      const updatedUser = result.rows[0] as User;
+      // 2. Manually update API Keys if provided (Allows empty strings to clear the key)
+      if (geminiApiKey !== undefined || claudeApiKey !== undefined) {
+        try {
+          await authService.updateApiKeys(
+            targetId,
+            geminiApiKey !== undefined ? geminiApiKey : null,
+            claudeApiKey !== undefined ? claudeApiKey : null,
+          );
+        } catch (err) {
+          process.stderr.write(
+            `[updateAccount] DB/Logic Error updating API keys: ${(err as Error).message}\nStack: ${(err as Error).stack}\n`,
+          );
+          res.statusCode = 500;
+          res.end(
+            JSON.stringify({
+              error:
+                "Failed to update API keys due to a server error. Please retry.",
+            }),
+          );
+          return;
+        }
+      }
 
-      res.statusCode = 200;
-      res.setHeader("Content-Type", "application/json");
-      res.end(
-        JSON.stringify({
-          message: "Username updated",
-          user: {
-            id: updatedUser.id,
-            username: updatedUser.username,
-            role: updatedUser.role,
-          },
-        }),
-      );
-    } catch (err) {
-      // Postgres 23505 = unique_violation on the username column. The user is trying to
-      // rename to a username that's already taken. Return 409 with a field hint so the
-      // frontend can mount the error directly on the username input.
-      const pgCode = (err as any)?.code;
-      const pgConstraint = (err as any)?.constraint || "";
-      if (pgCode === "23505") {
-        process.stderr.write(
-          `[updateAccount] Duplicate username on rename rejected (23505) constraint=${pgConstraint} detail=${(err as any)?.detail || "n/a"}\n`,
-        );
-        res.statusCode = 409;
+      // 3. Fetch the fresh user data to return
+      try {
+        const updatedUserResult = await authService.findUserById(targetId);
+
+        if (updatedUserResult.rows.length === 0) {
+          res.statusCode = 404;
+          res.end(JSON.stringify({ error: "User not found after update." }));
+          return;
+        }
+
+        const user = updatedUserResult.rows[0];
+
+        // DO NOT send raw keys back to the client. Send boolean flags instead.
+        const safeUser = {
+          id: user.id,
+          username: user.username,
+          role: user.role,
+          hasGeminiKey: !!user.gemini_api_key,
+          hasClaudeKey: !!user.claude_api_key,
+          created_at: user.created_at,
+          updated_at: user.updated_at,
+        };
+
+        res.statusCode = 200;
         res.setHeader("Content-Type", "application/json");
         res.end(
           JSON.stringify({
-            error: "Username already taken. Pick a different one.",
-            field: "username",
-            code: "USERNAME_TAKEN",
+            message: "Account updated successfully.",
+            user: safeUser,
+          }),
+        );
+      } catch (err) {
+        process.stderr.write(
+          `[updateAccount] DB/Logic Error fetching updated user: ${(err as Error).message}\nStack: ${(err as Error).stack}\n`,
+        );
+        res.statusCode = 500;
+        res.end(
+          JSON.stringify({
+            error: "Failed to retrieve updated user profile.",
           }),
         );
         return;
       }
-
+    } catch (err) {
       process.stderr.write(
-        `[updateAccount] DB/Logic Error code=${pgCode || "n/a"} constraint=${pgConstraint || "n/a"}: ${(err as Error).message}\nStack: ${(err as Error).stack}\n`,
+        `[updateAccount] Unexpected Error: ${(err as Error).message}\nStack: ${(err as Error).stack}\n`,
       );
       res.statusCode = 500;
       res.end(
         JSON.stringify({
-          error: "Account update failed due to a server error. Please retry.",
+          error:
+            "Account update failed due to an unexpected server error. Please retry.",
         }),
       );
     }

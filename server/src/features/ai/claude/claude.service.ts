@@ -10,16 +10,20 @@ import type {
   BulkClaudeFindingResponse,
 } from "./claude.types.js";
 
+// MODIFIED: Changed top-level validation to act as a warning instead of a fatal exit.
+// We preserve the global environment key for Admins/Super Admins to use by default.
 const ANTHROPIC_API_KEY = process.env["ANTHROPIC_API_KEY"];
 
 if (!ANTHROPIC_API_KEY) {
   process.stderr.write(
-    "FATAL RUNTIME CONFIG ERROR: ANTHROPIC_API_KEY variable context layer unassigned.\n",
+    "[WARNING] ANTHROPIC_API_KEY environment variable is not assigned. Default admin scans will fail unless a BYOK key is provided.\n",
   );
-  process.exit(1);
 }
 
-const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+// MODIFIED: Instantiate the global client safely (only if the environment variable exists).
+const globalAnthropicClient = ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: ANTHROPIC_API_KEY })
+  : null;
 
 export const claudeService = {
   async initializeReport(
@@ -190,6 +194,74 @@ export const claudeService = {
   ): Promise<void> {
     const aiStartTime = Date.now();
 
+    // --- ADDED: BYOK & FALLBACK KEY RESOLUTION LOGIC ---
+    let activeAnthropicClient: Anthropic;
+    try {
+      const encryptionKey = process.env["DB_ENCRYPTION_KEY"] as string;
+      const userKeySql = `
+        SELECT 
+          role,
+          CASE 
+            WHEN claude_api_key IS NOT NULL AND claude_api_key <> '' 
+            THEN pgp_sym_decrypt(dearmor(claude_api_key), $2) 
+            ELSE NULL 
+          END AS decrypted_key
+        FROM users 
+        WHERE id = $1;
+      `;
+      const keyRes = await pool.query(userKeySql, [adminId, encryptionKey]);
+
+      if (keyRes.rows.length === 0) {
+        throw new Error(
+          `User with ID ${adminId} not found during API key resolution.`,
+        );
+      }
+
+      const userRow = keyRes.rows[0];
+
+      if (userRow.decrypted_key) {
+        // STANDARD USER (OR ADMIN OVERRIDE): Instantiate a dynamic client using their personal key
+        activeAnthropicClient = new Anthropic({
+          apiKey: userRow.decrypted_key,
+        });
+        process.stdout.write(
+          `[CLAUDE_AUTH] Spawning dynamic AI client using custom BYOK for user ${adminId}.\n`,
+        );
+      } else if (userRow.role === "admin" || userRow.role === "super_admin") {
+        // ADMIN: Use the global .env client for easy access
+        if (!globalAnthropicClient) {
+          throw new Error(
+            "Admin user lacks custom key, and server is missing default ANTHROPIC_API_KEY in environment variables.",
+          );
+        }
+        activeAnthropicClient = globalAnthropicClient;
+        process.stdout.write(
+          `[CLAUDE_AUTH] Routing to global environment AI client for admin ${adminId}.\n`,
+        );
+      } else {
+        throw new Error(
+          "Access Denied: Standard users must provide their own Claude API key in Account Settings.",
+        );
+      }
+    } catch (keyErr: any) {
+      process.stderr.write(
+        `[CLAUDE_AUTH_FATAL] Failed to resolve API key for user ${adminId}: ${keyErr?.message || keyErr}\nStack: ${keyErr?.stack || "no stack"}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(keyErr, Object.getOwnPropertyNames(keyErr), 2)}\n`,
+      );
+
+      await pool.query(
+        `UPDATE scan_reports SET status = 'failed', engine_warnings = array_append(engine_warnings, $1), updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+        [
+          `API Key Resolution Failed: ${keyErr?.message || "Unknown error"}`,
+          reportId,
+        ],
+      );
+      return;
+    }
+    // --- END BYOK LOGIC ---
+
     const CHUNK_SIZE = 4;
     const totalChunks = Math.ceil(rawFindings.length / CHUNK_SIZE);
 
@@ -262,7 +334,8 @@ export const claudeService = {
 
       while (attempt <= MAX_RETRIES) {
         try {
-          const response = await anthropic.messages.create({
+          // MODIFIED: Replaced global 'anthropic' with dynamic 'activeAnthropicClient'
+          const response = await activeAnthropicClient.messages.create({
             model,
             max_tokens: 8192,
             system: contextualSystemBaseInstruction,
@@ -548,5 +621,101 @@ export const claudeService = {
         limit,
       },
     };
+  },
+
+  async testConnection(adminId: string): Promise<any> {
+    process.stdout.write(
+      `\n[CLAUDE_TEST] Initiating connection test for user ID: ${adminId}\n`,
+    );
+    const startTime = Date.now();
+    let activeAnthropicClient: Anthropic;
+    let source = "UNKNOWN";
+
+    try {
+      // 1. Test Database & Decryption
+      const encryptionKey = process.env["DB_ENCRYPTION_KEY"] as string;
+      const userKeySql = `
+        SELECT role,
+        CASE 
+          WHEN claude_api_key IS NOT NULL AND claude_api_key <> '' 
+          THEN pgp_sym_decrypt(dearmor(claude_api_key), $2) 
+          ELSE NULL 
+        END AS decrypted_key
+        FROM users WHERE id = $1;
+      `;
+      const keyRes = await pool.query(userKeySql, [adminId, encryptionKey]);
+
+      if (keyRes.rows.length === 0) {
+        throw new Error("USER_NOT_FOUND: User does not exist in the database.");
+      }
+
+      const userRow = keyRes.rows[0];
+
+      // 2. Resolve the Key
+      if (userRow.decrypted_key) {
+        activeAnthropicClient = new Anthropic({
+          apiKey: userRow.decrypted_key,
+        });
+        source = "PERSONAL_BYOK";
+        process.stdout.write(
+          `[CLAUDE_TEST] Successfully decrypted BYOK for user.\n`,
+        );
+      } else if (userRow.role === "admin" || userRow.role === "super_admin") {
+        if (!globalAnthropicClient) {
+          throw new Error(
+            "SYSTEM_KEY_MISSING: Admin lacks BYOK and server lacks .env key.",
+          );
+        }
+        activeAnthropicClient = globalAnthropicClient;
+        source = "SYSTEM_DEFAULT";
+        process.stdout.write(
+          `[CLAUDE_TEST] Using system default .env key for Admin.\n`,
+        );
+      } else {
+        throw new Error(
+          "MISSING_BYOK: Standard user has no configured API key.",
+        );
+      }
+
+      // 3. Ping the AI Model (UPDATED)
+      process.stdout.write(
+        `[CLAUDE_TEST] Dispatching telemetry ping to Claude API...\n`,
+      );
+
+      const prompt =
+        "Please respond with a very short, friendly 5-word greeting to confirm our connection is active.";
+
+      const response = await activeAnthropicClient.messages.create({
+        model: "claude-3-haiku-20240307",
+        max_tokens: 50, // Keep it low so it's cheap/fast
+        messages: [{ role: "user", content: prompt }],
+      });
+
+      const textBlock = response.content.find((block) => block.type === "text");
+      const text = textBlock && "text" in textBlock ? textBlock.text : "";
+
+      if (!text.trim()) {
+        throw new Error(`EMPTY_AI_RESPONSE: The AI returned a blank message.`);
+      }
+
+      const latencyMs = Date.now() - startTime;
+      process.stdout.write(
+        `[CLAUDE_TEST_SUCCESS] Connection verified in ${latencyMs}ms using ${source}. Response: "${text.trim()}"\n`,
+      );
+
+      // We now pass the EXACT AI response back to the frontend
+      return {
+        success: true,
+        message: "Claude AI connection established successfully.",
+        aiResponse: text.trim(),
+        latencyMs,
+        source,
+      };
+    } catch (err: any) {
+      process.stderr.write(
+        `[CLAUDE_TEST_FATAL] Telemetry failed: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      throw err;
+    }
   },
 };

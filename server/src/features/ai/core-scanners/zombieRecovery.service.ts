@@ -37,9 +37,15 @@ export const zombieRecoveryService = {
                 report.scanned_by,
                 report.ai_model,
               )
-              .catch((err) =>
-                process.stderr.write(`[ZOMBIE_CRASH] ${err.message}\n`),
-              );
+              // MODIFIED: Expanded error logging to dump the full stack and raw object
+              .catch((err: any) => {
+                process.stderr.write(
+                  `[ZOMBIE_CRASH_GEMINI_URL] Failed to resume: ${err?.message || err}\nStack: ${err?.stack || "no stack"}\n`,
+                );
+                process.stderr.write(
+                  `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+                );
+              });
           } else {
             geminiService
               .runBackgroundRepoScan(
@@ -48,9 +54,15 @@ export const zombieRecoveryService = {
                 report.scanned_by,
                 report.ai_model,
               )
-              .catch((err) =>
-                process.stderr.write(`[ZOMBIE_CRASH] ${err.message}\n`),
-              );
+              // MODIFIED: Expanded error logging to dump the full stack and raw object
+              .catch((err: any) => {
+                process.stderr.write(
+                  `[ZOMBIE_CRASH_GEMINI_REPO] Failed to resume: ${err?.message || err}\nStack: ${err?.stack || "no stack"}\n`,
+                );
+                process.stderr.write(
+                  `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+                );
+              });
           }
         } else if (report.ai_provider === "claude") {
           if (report.scan_type === "url") {
@@ -61,9 +73,15 @@ export const zombieRecoveryService = {
                 report.scanned_by,
                 report.ai_model,
               )
-              .catch((err) =>
-                process.stderr.write(`[ZOMBIE_CRASH] ${err.message}\n`),
-              );
+              // MODIFIED: Expanded error logging to dump the full stack and raw object
+              .catch((err: any) => {
+                process.stderr.write(
+                  `[ZOMBIE_CRASH_CLAUDE_URL] Failed to resume: ${err?.message || err}\nStack: ${err?.stack || "no stack"}\n`,
+                );
+                process.stderr.write(
+                  `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+                );
+              });
           } else {
             claudeService
               .runBackgroundRepoScan(
@@ -72,15 +90,25 @@ export const zombieRecoveryService = {
                 report.scanned_by,
                 report.ai_model,
               )
-              .catch((err) =>
-                process.stderr.write(`[ZOMBIE_CRASH] ${err.message}\n`),
-              );
+              // MODIFIED: Expanded error logging to dump the full stack and raw object
+              .catch((err: any) => {
+                process.stderr.write(
+                  `[ZOMBIE_CRASH_CLAUDE_REPO] Failed to resume: ${err?.message || err}\nStack: ${err?.stack || "no stack"}\n`,
+                );
+                process.stderr.write(
+                  `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+                );
+              });
           }
         }
       }
-    } catch (err) {
+    } catch (err: any) {
+      // MODIFIED: Expanded database query error logging to ensure no errors are hidden
       process.stderr.write(
-        `[ZOMBIE_SWEEPER_ERROR] Failed to query database: ${(err as Error).message}\n`,
+        `[ZOMBIE_SWEEPER_ERROR] Failed to query database: ${err?.message || err}\nStack: ${err?.stack || "no stack"}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
       );
     }
   },

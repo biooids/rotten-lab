@@ -37,6 +37,8 @@ CREATE TABLE users (
     username VARCHAR(20) UNIQUE NOT NULL CHECK (char_length(username) >= 3),
     password_hash VARCHAR(255) NOT NULL CHECK (char_length(password_hash) >= 60),
     role user_role NOT NULL DEFAULT 'user', 
+    gemini_api_key TEXT, -- Encrypted at rest using pgcrypto
+    claude_api_key TEXT, -- Encrypted at rest using pgcrypto
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );

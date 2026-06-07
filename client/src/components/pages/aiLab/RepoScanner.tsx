@@ -28,7 +28,6 @@ import AuthGuard from "@/components/shared/AuthGuard";
 export default function RepoScanner() {
   const router = useRouter();
 
-  // NEW: Multi-LLM Engine Selection State
   const [selectedEngine, setSelectedEngine] = useState<"gemini" | "claude">(
     "gemini",
   );
@@ -40,13 +39,18 @@ export default function RepoScanner() {
   const [secretAccessKey, setSecretAccessKey] = useState<string>("");
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
-  const userRole = useSelector((state: RootState) => state.auth?.user?.role);
-  const isAdminBypassed = userRole === "admin" || userRole === "super_admin";
+  const user = useSelector((state: RootState) => state.auth?.user);
+  const isAdminBypassed =
+    user?.role === "admin" || user?.role === "super_admin";
 
-  // Init both mutations
-  const [scanGeminiRepo, { isLoading: isGeminiLoading }] =
+  const isMissingKey =
+    !isAdminBypassed &&
+    ((selectedEngine === "gemini" && !user?.hasGeminiKey) ||
+      (selectedEngine === "claude" && !user?.hasClaudeKey));
+
+  const [scanRepoGemini, { isLoading: isGeminiLoading }] =
     useScanRepoMutation();
-  const [scanClaudeRepo, { isLoading: isClaudeLoading }] =
+  const [scanRepoClaude, { isLoading: isClaudeLoading }] =
     useClaudeScanRepoMutation();
 
   const isLoading = isGeminiLoading || isClaudeLoading;
@@ -55,9 +59,10 @@ export default function RepoScanner() {
     e.preventDefault();
     setFormErrors({});
 
+    if (isMissingKey) return;
+
     const payload = { targetUrl, secretAccessKey };
 
-    // 1. Dynamic Validation based on engine selection
     const schemaToUse =
       selectedEngine === "claude" ? claudeRepoScanSchema : repoScanSchema;
     const validationResult = schemaToUse.safeParse(payload);
@@ -83,26 +88,22 @@ export default function RepoScanner() {
       return;
     }
 
-    // 2. Dynamic execution based on engine selection
     try {
       let response;
       if (selectedEngine === "claude") {
-        response = await scanClaudeRepo({
+        response = await scanRepoClaude({
           ...payload,
           model: claudeModel,
         }).unwrap();
       } else {
-        response = await scanGeminiRepo({
+        response = await scanRepoGemini({
           ...payload,
           model: geminiModel,
         }).unwrap();
       }
 
-      // 3. Dynamic redirection embedding the engine in the URL
       router.push(`/ai-lab/report/${selectedEngine}/${response.reportId}`);
     } catch (err: any) {
-      // Distinguish failure modes so the user knows whether to fix input, fix their
-      // Portfolio Key, wait, or report a bug.
       let global: string;
       if (err?.status === "FETCH_ERROR" || err?.status === undefined) {
         global = "Couldn't reach the server. Check your connection and retry.";
@@ -156,7 +157,6 @@ export default function RepoScanner() {
           </p>
 
           <form onSubmit={handleFormSubmit} className="flex flex-col gap-4">
-            {/* BROWSER HONEYPOT: Prevents aggressive auto-fill so real inputs stay blank */}
             <div
               style={{ display: "none", opacity: 0, position: "absolute" }}
               aria-hidden="true"
@@ -175,7 +175,6 @@ export default function RepoScanner() {
               />
             </div>
 
-            {/* ENGINE SELECTOR TOGGLE */}
             <div className="flex flex-col gap-1">
               <label className="text-xs font-bold">
                 Select AI Processing Engine
@@ -209,6 +208,43 @@ export default function RepoScanner() {
                 </button>
               </div>
             </div>
+
+            {/* ADDED: Admin/Super Admin Telemetry Posture Ribbon */}
+            {isAdminBypassed && (
+              <div className="border-3 border-double border-primary/30 bg-primary/5 p-2 text-[11px] font-bold flex flex-wrap justify-between items-center gap-2">
+                <span className="text-primary uppercase">
+                  [ SECURITY BYPASS CONTROL ]
+                </span>
+                <div className="flex gap-4">
+                  <span>
+                    ACCESS SHIELD:{" "}
+                    <strong className="text-emerald-500">[ BYPASSED ]</strong>
+                  </span>
+                  <span>
+                    CREDENTIAL FLIGHT:{" "}
+                    {selectedEngine === "gemini" ? (
+                      user?.hasGeminiKey ? (
+                        <strong className="text-blue-500">
+                          [ PERSONAL BYOK ]
+                        </strong>
+                      ) : (
+                        <strong className="text-amber-500">
+                          [ CORE SERVER ENV fallback ]
+                        </strong>
+                      )
+                    ) : user?.hasClaudeKey ? (
+                      <strong className="text-orange-500">
+                        [ PERSONAL BYOK ]
+                      </strong>
+                    ) : (
+                      <strong className="text-amber-500">
+                        [ CORE SERVER ENV fallback ]
+                      </strong>
+                    )}
+                  </span>
+                </div>
+              </div>
+            )}
 
             {selectedEngine === "claude" && (
               <ClaudeModelPicker
@@ -264,9 +300,31 @@ export default function RepoScanner() {
               </div>
             </div>
 
+            {isMissingKey && (
+              <div className="border-3 border-double border-destructive bg-destructive/10 text-destructive p-4 text-xs font-bold flex flex-col items-center gap-2 text-center mt-2">
+                <span className="uppercase">
+                  [ SYSTEM LOCK ] Missing API Key for {selectedEngine}
+                </span>
+                <span className="opacity-80">
+                  You must configure a valid{" "}
+                  {selectedEngine === "gemini"
+                    ? "Google Gemini"
+                    : "Anthropic Claude"}{" "}
+                  API key to perform this scan.
+                </span>
+                {/* MODIFIED: Updated path to point precisely to '/me' avoiding 404 router issues */}
+                <Link
+                  href="/me"
+                  className="border-3 border-double border-destructive px-4 py-2 hover:bg-destructive hover:text-destructive-foreground transition-colors mt-2 uppercase"
+                >
+                  Configure in Account Settings
+                </Link>
+              </div>
+            )}
+
             <button
               type="submit"
-              disabled={isLoading}
+              disabled={isLoading || isMissingKey}
               className="w-full border-3 border-double bg-primary text-primary-foreground hover:bg-primary/90 font-bold text-xs py-3 disabled:opacity-50 transition-colors mt-2"
             >
               {isLoading
