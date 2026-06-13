@@ -3,12 +3,12 @@
 
 import React, { useState, useEffect } from "react";
 import {
-  Hammer,
   Lock,
   Unlock,
   Loader2,
   Save,
   AlertTriangle,
+  Globe,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import CornerFlourish from "@/components/shared/CornerFlourish";
@@ -30,6 +30,8 @@ export default function MaintenanceProtocol({ showToast }: Props) {
 
   const [maintMsg, setMaintMsg] = useState("");
   const [isMaintLocal, setIsMaintLocal] = useState(false);
+  const [isGeminiGlobal, setIsGeminiGlobal] = useState(false);
+  const [isClaudeGlobal, setIsClaudeGlobal] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   // Populate state on load
@@ -37,6 +39,8 @@ export default function MaintenanceProtocol({ showToast }: Props) {
     if (maintData?.settings) {
       setIsMaintLocal(maintData.settings.is_maintenance);
       setMaintMsg(maintData.settings.maintenance_message);
+      setIsGeminiGlobal(maintData.settings.allow_global_gemini);
+      setIsClaudeGlobal(maintData.settings.allow_global_claude);
     }
   }, [maintData]);
 
@@ -48,6 +52,8 @@ export default function MaintenanceProtocol({ showToast }: Props) {
     const result = updateMaintenanceSchema.safeParse({
       is_maintenance: isMaintLocal,
       maintenance_message: maintMsg,
+      allow_global_gemini: isGeminiGlobal,
+      allow_global_claude: isClaudeGlobal,
     });
 
     const errors: Record<string, string> = {};
@@ -59,15 +65,17 @@ export default function MaintenanceProtocol({ showToast }: Props) {
       });
     }
     setFieldErrors(errors);
-  }, [maintMsg, isMaintLocal, maintData]);
+  }, [maintMsg, isMaintLocal, isGeminiGlobal, isClaudeGlobal, maintData]);
 
-  const handleSaveMaintenance = async () => {
+  const handleSaveSettings = async () => {
     if (Object.keys(fieldErrors).length > 0) return;
 
     try {
       await updateMaint({
         is_maintenance: isMaintLocal,
         maintenance_message: maintMsg,
+        allow_global_gemini: isGeminiGlobal,
+        allow_global_claude: isClaudeGlobal,
       }).unwrap();
       showToast("System protocols updated successfully.", "success");
     } catch {
@@ -88,7 +96,7 @@ export default function MaintenanceProtocol({ showToast }: Props) {
       {/* --- HEADER CONTROLS --- */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex gap-2 items-center text-primary">
-          <h4 className="font-bold text-sm  ">Maintainance message</h4>
+          <h4 className="font-bold text-sm">System Directives</h4>
         </div>
 
         <button
@@ -113,7 +121,7 @@ export default function MaintenanceProtocol({ showToast }: Props) {
       {/* --- INPUT LAYER WITH LIVE COUNT --- */}
       <div className="flex flex-col gap-2">
         <div className="flex justify-between items-center w-full">
-          <label className="text-xs font-bold opacity-70  ">
+          <label className="text-xs font-bold opacity-70">
             Broadcast Message
           </label>
           <span
@@ -142,7 +150,7 @@ export default function MaintenanceProtocol({ showToast }: Props) {
           />
           <Button
             disabled={isMaintUpdating || Object.keys(fieldErrors).length > 0}
-            onClick={handleSaveMaintenance}
+            onClick={handleSaveSettings}
             className="border-3 border-double rounded-none h-auto aspect-square p-2"
           >
             {isMaintUpdating ? (
@@ -160,6 +168,60 @@ export default function MaintenanceProtocol({ showToast }: Props) {
             {fieldErrors.maintenance_message}
           </p>
         )}
+      </div>
+
+      {/* --- GLOBAL AI ENGINE ACCESS --- */}
+      <div className="border-t-3 border-double border-border mt-2 pt-4 flex flex-col gap-3">
+        <label className="text-xs font-bold opacity-70">
+          Global AI Engine Access
+        </label>
+        <p className="text-[10px] font-bold opacity-60 leading-tight">
+          Allow standard users to scan using the server's `.env` master keys. If
+          disabled, standard users must provide a BYOK in their account
+          settings.
+        </p>
+
+        <div className="flex flex-col sm:flex-row gap-3">
+          {/* GEMINI TOGGLE */}
+          <button
+            type="button"
+            disabled={isMaintUpdating}
+            onClick={() => setIsGeminiGlobal(!isGeminiGlobal)}
+            className={cn(
+              "flex-1 flex justify-center items-center gap-2 px-3 py-2 border-3 border-double font-bold text-xs transition-all disabled:opacity-50 disabled:cursor-not-allowed",
+              isGeminiGlobal
+                ? "bg-blue-500/10 text-blue-500 border-blue-500"
+                : "bg-background text-foreground opacity-60 border-foreground/30 hover:border-blue-500 hover:opacity-100",
+            )}
+          >
+            {isGeminiGlobal ? (
+              <Globe className="h-3 w-3" />
+            ) : (
+              <Lock className="h-3 w-3" />
+            )}
+            Gemini Global: {isGeminiGlobal ? "ENABLED" : "DISABLED"}
+          </button>
+
+          {/* CLAUDE TOGGLE */}
+          <button
+            type="button"
+            disabled={isMaintUpdating}
+            onClick={() => setIsClaudeGlobal(!isClaudeGlobal)}
+            className={cn(
+              "flex-1 flex justify-center items-center gap-2 px-3 py-2 border-3 border-double font-bold text-xs transition-all disabled:opacity-50 disabled:cursor-not-allowed",
+              isClaudeGlobal
+                ? "bg-orange-500/10 text-orange-500 border-orange-500"
+                : "bg-background text-foreground opacity-60 border-foreground/30 hover:border-orange-500 hover:opacity-100",
+            )}
+          >
+            {isClaudeGlobal ? (
+              <Globe className="h-3 w-3" />
+            ) : (
+              <Lock className="h-3 w-3" />
+            )}
+            Claude Global: {isClaudeGlobal ? "ENABLED" : "DISABLED"}
+          </button>
+        </div>
       </div>
     </div>
   );

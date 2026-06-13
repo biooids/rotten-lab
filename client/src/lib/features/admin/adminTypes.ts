@@ -17,12 +17,16 @@ export interface UpdateRoleRequest {
 export interface SystemSettings {
   is_maintenance: boolean;
   maintenance_message: string;
+  allow_global_gemini: boolean;
+  allow_global_claude: boolean;
   updated_at: string;
 }
 
 export interface UpdateMaintenanceRequest {
   is_maintenance: boolean;
   maintenance_message: string;
+  allow_global_gemini: boolean;
+  allow_global_claude: boolean;
 }
 
 export interface AuditLog {
@@ -34,7 +38,6 @@ export interface AuditLog {
   created_at: string;
 }
 
-// --- NEW SECURITY BAN TYPE ---
 export interface SecurityBan {
   key: string;
   type: "IP" | "USERNAME";

@@ -1,4 +1,4 @@
-//src/lib/features/ai/claude/claudeApiSlice.ts
+//src/lib/features/ai/gemini/geminiApiSlice.ts
 import { createApi } from "@reduxjs/toolkit/query/react";
 import {
   ScanRequestDTO,

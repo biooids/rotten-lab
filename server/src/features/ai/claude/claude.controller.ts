@@ -8,9 +8,8 @@ import type { JWTPayload } from "../../auth/auth.types.js";
 import { pool } from "../../../db/psql.js"; // ADDED: Required for user role/key lookup
 
 const ACCESS_TOKEN_SECRET = process.env["ACCESS_TOKEN_SECRET"];
-const PORTFOLIO_SECRET_KEY = process.env["PORTFOLIO_SECRET_KEY"];
 
-if (!ACCESS_TOKEN_SECRET || !PORTFOLIO_SECRET_KEY) {
+if (!ACCESS_TOKEN_SECRET) {
   process.stderr.write(
     "FATAL RUNTIME CONFIG ERROR: Environment keys unassigned for Claude.\n",
   );
@@ -40,7 +39,12 @@ export const claudeController = {
         ACCESS_TOKEN_SECRET as string,
       ) as JWTPayload;
     } catch (err: any) {
-      process.stderr.write(`[HTTP_REJECT] Invalid JWT: ${err.message}\n`);
+      process.stderr.write(
+        `[HTTP_REJECT] Invalid JWT: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+      );
       res.statusCode = 401;
       res.end(
         JSON.stringify({ error: "Unauthorized: Invalid or expired token." }),
@@ -52,6 +56,9 @@ export const claudeController = {
     try {
       body = (await json(req)) as ScanRequestDTO;
     } catch (err: any) {
+      process.stderr.write(
+        `[HTTP_REJECT] Invalid JSON Body: ${err.message}\nStack: ${err.stack}\n`,
+      );
       res.statusCode = 400;
       res.end(JSON.stringify({ error: "Invalid JSON body payload." }));
       return;
@@ -78,7 +85,10 @@ export const claudeController = {
         );
         return;
       }
-    } catch {
+    } catch (err: any) {
+      process.stderr.write(
+        `[HTTP_REJECT] Malformed URL: ${err.message}\nStack: ${err.stack}\n`,
+      );
       res.statusCode = 400;
       res.end(
         JSON.stringify({ error: "Malformed URL provided. Cannot scan." }),
@@ -89,42 +99,53 @@ export const claudeController = {
 
     // --- ADDED: BYOK & ROLE AUTHORIZATION CHECK ---
     // If the user is an admin, let them through (they use the global .env key or their BYOK).
-    // If they are a standard user, they MUST have a valid Portfolio Key AND a saved BYOK key.
+    // If they are a standard user, check both their personal key and the global system permission.
     if (decoded.role === "user") {
-      if (body.secretAccessKey !== PORTFOLIO_SECRET_KEY) {
-        process.stderr.write(
-          `[HTTP_SHIELD] Rejected standard user due to incorrect Portfolio Key.\n`,
-        );
-        res.statusCode = 403;
-        res.end(
-          JSON.stringify({
-            error: "Access Denied: Valid Portfolio Key required.",
-          }),
-        );
-        return;
-      }
-
-      // Check if the standard user has actually saved a Claude API key
       try {
-        const keyCheckSql = `SELECT claude_api_key FROM users WHERE id = $1`;
+        // MODIFIED: Now fetching BOTH the personal key and the global system setting simultaneously
+        const keyCheckSql = `
+          SELECT 
+            u.claude_api_key,
+            (SELECT allow_global_claude FROM system_settings WHERE id = 1) AS allow_global_claude
+          FROM users u 
+          WHERE u.id = $1
+        `;
         const keyRes = await pool.query(keyCheckSql, [decoded.id]);
 
-        if (keyRes.rows.length === 0 || !keyRes.rows[0].claude_api_key) {
+        if (keyRes.rows.length === 0) {
           process.stderr.write(
-            `[HTTP_SHIELD] Rejected standard user ${decoded.id}: No BYOK Claude key configured.\n`,
+            `[HTTP_SHIELD] Rejected: User ID ${decoded.id} not found in database.\n`,
+          );
+          res.statusCode = 404;
+          res.end(JSON.stringify({ error: "User record not found." }));
+          return;
+        }
+
+        const userData = keyRes.rows[0];
+        const hasPersonalKey =
+          userData.claude_api_key && userData.claude_api_key.trim() !== "";
+        const hasGlobalAccess = userData.allow_global_claude === true;
+
+        // MODIFIED: Reject only if they lack a personal key AND global access is turned off
+        if (!hasPersonalKey && !hasGlobalAccess) {
+          process.stderr.write(
+            `[HTTP_SHIELD] Rejected standard user ${decoded.id}: No BYOK Claude key configured and global access is disabled.\n`,
           );
           res.statusCode = 403;
           res.end(
             JSON.stringify({
               error:
-                "Access Denied: You must configure a valid Claude API key in your Account Settings to perform scans.",
+                "Access Denied: Global access is disabled. You must configure a valid Claude API key in your Account Settings to perform scans.",
             }),
           );
           return;
         }
       } catch (dbErr: any) {
         process.stderr.write(
-          `[HTTP_CRASH] Failed to check user API key status: ${dbErr.message}\n`,
+          `[HTTP_CRASH] Failed to check user API key status: ${dbErr.message}\nStack: ${dbErr.stack}\n`,
+        );
+        process.stderr.write(
+          `[RAW_ERROR_DUMP] ${JSON.stringify(dbErr, Object.getOwnPropertyNames(dbErr), 2)}\n`,
         );
         res.statusCode = 500;
         res.end(
@@ -170,14 +191,20 @@ export const claudeController = {
           decoded.id,
           resolvedModel,
         )
-        .catch((workerErr) => {
+        .catch((workerErr: any) => {
           process.stderr.write(
-            `[FATAL_WORKER_ESCAPE] URL Worker failed to contain error: ${workerErr.message}\n`,
+            `[FATAL_WORKER_ESCAPE] URL Worker failed to contain error: ${workerErr.message}\nStack: ${workerErr.stack}\n`,
+          );
+          process.stderr.write(
+            `[RAW_ERROR_DUMP] ${JSON.stringify(workerErr, Object.getOwnPropertyNames(workerErr), 2)}\n`,
           );
         });
     } catch (err: any) {
       process.stderr.write(
-        `[HTTP_CRASH] Failed to initialize DB report: ${err.message}\n`,
+        `[HTTP_CRASH] Failed to initialize DB report: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
       );
       res.statusCode = 500;
       res.end(
@@ -210,7 +237,12 @@ export const claudeController = {
         ACCESS_TOKEN_SECRET as string,
       ) as JWTPayload;
     } catch (err: any) {
-      process.stderr.write(`[HTTP_REJECT] Invalid JWT: ${err.message}\n`);
+      process.stderr.write(
+        `[HTTP_REJECT] Invalid JWT: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+      );
       res.statusCode = 401;
       res.end(
         JSON.stringify({ error: "Unauthorized: Invalid or expired token." }),
@@ -222,6 +254,9 @@ export const claudeController = {
     try {
       body = (await json(req)) as ScanRequestDTO;
     } catch (err: any) {
+      process.stderr.write(
+        `[HTTP_REJECT] Invalid JSON Body: ${err.message}\nStack: ${err.stack}\n`,
+      );
       res.statusCode = 400;
       res.end(JSON.stringify({ error: "Invalid JSON body payload." }));
       return;
@@ -261,7 +296,10 @@ export const claudeController = {
         );
         return;
       }
-    } catch {
+    } catch (err: any) {
+      process.stderr.write(
+        `[HTTP_REJECT] Malformed URL: ${err.message}\nStack: ${err.stack}\n`,
+      );
       res.statusCode = 400;
       res.end(
         JSON.stringify({ error: "Malformed URL provided. Cannot scan." }),
@@ -271,42 +309,53 @@ export const claudeController = {
     // --- END ADDED ---
 
     // --- ADDED: BYOK & ROLE AUTHORIZATION CHECK ---
-    // Same check as URL scanner to ensure standard users are paying their own compute cost
+    // Same check as URL scanner to ensure standard users are paying their own compute cost unless globally granted
     if (decoded.role === "user") {
-      if (body.secretAccessKey !== PORTFOLIO_SECRET_KEY) {
-        process.stderr.write(
-          `[HTTP_SHIELD] Rejected standard user due to incorrect Portfolio Key.\n`,
-        );
-        res.statusCode = 403;
-        res.end(
-          JSON.stringify({
-            error: "Access Denied: Valid Portfolio Key required.",
-          }),
-        );
-        return;
-      }
-
-      // Check if the standard user has actually saved a Claude API key
       try {
-        const keyCheckSql = `SELECT claude_api_key FROM users WHERE id = $1`;
+        // MODIFIED: Now fetching BOTH the personal key and the global system setting simultaneously
+        const keyCheckSql = `
+          SELECT 
+            u.claude_api_key,
+            (SELECT allow_global_claude FROM system_settings WHERE id = 1) AS allow_global_claude
+          FROM users u 
+          WHERE u.id = $1
+        `;
         const keyRes = await pool.query(keyCheckSql, [decoded.id]);
 
-        if (keyRes.rows.length === 0 || !keyRes.rows[0].claude_api_key) {
+        if (keyRes.rows.length === 0) {
           process.stderr.write(
-            `[HTTP_SHIELD] Rejected standard user ${decoded.id}: No BYOK Claude key configured.\n`,
+            `[HTTP_SHIELD] Rejected: User ID ${decoded.id} not found in database.\n`,
+          );
+          res.statusCode = 404;
+          res.end(JSON.stringify({ error: "User record not found." }));
+          return;
+        }
+
+        const userData = keyRes.rows[0];
+        const hasPersonalKey =
+          userData.claude_api_key && userData.claude_api_key.trim() !== "";
+        const hasGlobalAccess = userData.allow_global_claude === true;
+
+        // MODIFIED: Reject only if they lack a personal key AND global access is turned off
+        if (!hasPersonalKey && !hasGlobalAccess) {
+          process.stderr.write(
+            `[HTTP_SHIELD] Rejected standard user ${decoded.id}: No BYOK Claude key configured and global access is disabled.\n`,
           );
           res.statusCode = 403;
           res.end(
             JSON.stringify({
               error:
-                "Access Denied: You must configure a valid Claude API key in your Account Settings to perform scans.",
+                "Access Denied: Global access is disabled. You must configure a valid Claude API key in your Account Settings to perform scans.",
             }),
           );
           return;
         }
       } catch (dbErr: any) {
         process.stderr.write(
-          `[HTTP_CRASH] Failed to check user API key status: ${dbErr.message}\n`,
+          `[HTTP_CRASH] Failed to check user API key status: ${dbErr.message}\nStack: ${dbErr.stack}\n`,
+        );
+        process.stderr.write(
+          `[RAW_ERROR_DUMP] ${JSON.stringify(dbErr, Object.getOwnPropertyNames(dbErr), 2)}\n`,
         );
         res.statusCode = 500;
         res.end(
@@ -352,14 +401,20 @@ export const claudeController = {
           decoded.id,
           resolvedModel,
         )
-        .catch((workerErr) => {
+        .catch((workerErr: any) => {
           process.stderr.write(
-            `[FATAL_WORKER_ESCAPE] Git Worker failed to contain error: ${workerErr.message}\n`,
+            `[FATAL_WORKER_ESCAPE] Git Worker failed to contain error: ${workerErr.message}\nStack: ${workerErr.stack}\n`,
+          );
+          process.stderr.write(
+            `[RAW_ERROR_DUMP] ${JSON.stringify(workerErr, Object.getOwnPropertyNames(workerErr), 2)}\n`,
           );
         });
     } catch (err: any) {
       process.stderr.write(
-        `[HTTP_CRASH] Failed to initialize DB report: ${err.message}\n`,
+        `[HTTP_CRASH] Failed to initialize DB report: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
       );
       res.statusCode = 500;
       res.end(
@@ -402,6 +457,12 @@ export const claudeController = {
         ACCESS_TOKEN_SECRET as string,
       ) as JWTPayload;
     } catch (err: any) {
+      process.stderr.write(
+        `[HTTP_REJECT] Invalid JWT: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+      );
       res.statusCode = 401;
       res.end(JSON.stringify({ error: "Unauthorized token." }));
       return;
@@ -425,7 +486,10 @@ export const claudeController = {
       );
     } catch (err: any) {
       process.stderr.write(
-        `[HTTP_CRASH] Failed fetching history: ${err.message}\n`,
+        `[HTTP_CRASH] Failed fetching history: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
       );
       res.statusCode = 500;
       res.end(
@@ -467,6 +531,12 @@ export const claudeController = {
         ACCESS_TOKEN_SECRET as string,
       ) as JWTPayload;
     } catch (err: any) {
+      process.stderr.write(
+        `[HTTP_REJECT] Invalid JWT: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+      );
       res.statusCode = 401;
       res.end(JSON.stringify({ error: "Unauthorized token." }));
       return;
@@ -493,7 +563,10 @@ export const claudeController = {
       );
     } catch (err: any) {
       process.stderr.write(
-        `[HTTP_CRASH] Failed fetching report details: ${err.message}\n`,
+        `[HTTP_CRASH] Failed fetching report details: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
       );
       res.statusCode = 500;
       res.end(
@@ -524,6 +597,12 @@ export const claudeController = {
         ACCESS_TOKEN_SECRET as string,
       ) as JWTPayload;
     } catch (err: any) {
+      process.stderr.write(
+        `[HTTP_REJECT] Invalid JWT: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+      );
       res.statusCode = 401;
       res.end(JSON.stringify({ error: "Unauthorized token." }));
       return;
@@ -534,6 +613,12 @@ export const claudeController = {
       res.statusCode = 200;
       res.end(JSON.stringify(telemetryData));
     } catch (err: any) {
+      process.stderr.write(
+        `[HTTP_REJECT] Connection test failed: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+      );
       res.statusCode = 400; // Client-side configuration error or API failure
       res.end(
         JSON.stringify({

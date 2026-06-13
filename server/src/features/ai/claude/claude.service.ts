@@ -198,16 +198,19 @@ export const claudeService = {
     let activeAnthropicClient: Anthropic;
     try {
       const encryptionKey = process.env["DB_ENCRYPTION_KEY"] as string;
+
+      // MODIFIED: Updated SQL to manually select allow_global_claude from system_settings directly in this query
       const userKeySql = `
         SELECT 
-          role,
+          u.role,
           CASE 
-            WHEN claude_api_key IS NOT NULL AND claude_api_key <> '' 
-            THEN pgp_sym_decrypt(dearmor(claude_api_key), $2) 
+            WHEN u.claude_api_key IS NOT NULL AND u.claude_api_key <> '' 
+            THEN pgp_sym_decrypt(dearmor(u.claude_api_key), $2) 
             ELSE NULL 
-          END AS decrypted_key
-        FROM users 
-        WHERE id = $1;
+          END AS decrypted_key,
+          (SELECT allow_global_claude FROM system_settings WHERE id = 1) AS allow_global_claude
+        FROM users u
+        WHERE u.id = $1;
       `;
       const keyRes = await pool.query(userKeySql, [adminId, encryptionKey]);
 
@@ -238,9 +241,20 @@ export const claudeService = {
         process.stdout.write(
           `[CLAUDE_AUTH] Routing to global environment AI client for admin ${adminId}.\n`,
         );
+      } else if (userRow.allow_global_claude === true) {
+        // ADDED: STANDARD USER FALLBACK TO GLOBAL KEY IF PERMITTED BY SYSTEM SETTINGS
+        if (!globalAnthropicClient) {
+          throw new Error(
+            "System setting allows global Claude, but ANTHROPIC_API_KEY is missing from environment variables.",
+          );
+        }
+        activeAnthropicClient = globalAnthropicClient;
+        process.stdout.write(
+          `[CLAUDE_AUTH] Routing to global environment AI client for standard user ${adminId} via system_settings permission.\n`,
+        );
       } else {
         throw new Error(
-          "Access Denied: Standard users must provide their own Claude API key in Account Settings.",
+          "Access Denied: Standard users must provide their own Claude API key in Account Settings, and global access is currently disabled.",
         );
       }
     } catch (keyErr: any) {
@@ -634,14 +648,17 @@ export const claudeService = {
     try {
       // 1. Test Database & Decryption
       const encryptionKey = process.env["DB_ENCRYPTION_KEY"] as string;
+
+      // MODIFIED: Added system_settings select to check allow_global_claude manually
       const userKeySql = `
-        SELECT role,
+        SELECT u.role,
         CASE 
-          WHEN claude_api_key IS NOT NULL AND claude_api_key <> '' 
-          THEN pgp_sym_decrypt(dearmor(claude_api_key), $2) 
+          WHEN u.claude_api_key IS NOT NULL AND u.claude_api_key <> '' 
+          THEN pgp_sym_decrypt(dearmor(u.claude_api_key), $2) 
           ELSE NULL 
-        END AS decrypted_key
-        FROM users WHERE id = $1;
+        END AS decrypted_key,
+        (SELECT allow_global_claude FROM system_settings WHERE id = 1) AS allow_global_claude
+        FROM users u WHERE u.id = $1;
       `;
       const keyRes = await pool.query(userKeySql, [adminId, encryptionKey]);
 
@@ -671,9 +688,21 @@ export const claudeService = {
         process.stdout.write(
           `[CLAUDE_TEST] Using system default .env key for Admin.\n`,
         );
+      } else if (userRow.allow_global_claude === true) {
+        // ADDED: Global fallback for standard users based on admin permission
+        if (!globalAnthropicClient) {
+          throw new Error(
+            "SYSTEM_KEY_MISSING: System allows global Claude, but server lacks .env key.",
+          );
+        }
+        activeAnthropicClient = globalAnthropicClient;
+        source = "SYSTEM_DEFAULT_GRANTED";
+        process.stdout.write(
+          `[CLAUDE_TEST] Using system default .env key for standard user via granted permission.\n`,
+        );
       } else {
         throw new Error(
-          "MISSING_BYOK: Standard user has no configured API key.",
+          "MISSING_BYOK: Standard user has no configured API key, and global access is disabled.",
         );
       }
 

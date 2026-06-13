@@ -42,7 +42,13 @@ export const reportsController = {
         ACCESS_TOKEN_SECRET as string,
       ) as JWTPayload;
     } catch (err: any) {
-      process.stderr.write(`[HTTP_REJECT] Invalid JWT: ${err.message}\n`);
+      // MODIFIED: Aggressive error logging for JWT failure
+      process.stderr.write(
+        `[HTTP_REJECT] Invalid JWT: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+      );
       res.setHeader("Content-Type", "application/json");
       res.statusCode = 401;
       res.end(
@@ -80,8 +86,12 @@ export const reportsController = {
 
       res.end(pdfBuffer);
     } catch (err: any) {
+      // MODIFIED: Aggressive error logging for PDF Generation failure
       process.stderr.write(
         `[HTTP_CRASH] Failed to generate PDF in controller: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
       );
       res.setHeader("Content-Type", "application/json");
       res.statusCode = 500;
@@ -120,7 +130,13 @@ export const reportsController = {
         ACCESS_TOKEN_SECRET as string,
       ) as JWTPayload;
     } catch (err: any) {
-      process.stderr.write(`[HTTP_REJECT] Invalid JWT: ${err.message}\n`);
+      // MODIFIED: Aggressive error logging for JWT failure
+      process.stderr.write(
+        `[HTTP_REJECT] Invalid JWT: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+      );
       res.statusCode = 401;
       res.end(JSON.stringify({ error: "Unauthorized token." }));
       return;
@@ -154,8 +170,12 @@ export const reportsController = {
       res.statusCode = 200;
       res.end(JSON.stringify({ history }));
     } catch (err: any) {
+      // MODIFIED: Aggressive error logging for History fetching failure
       process.stderr.write(
         `[HTTP_CRASH] Failed fetching chat history in controller: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
       );
       res.statusCode = 500;
       res.end(JSON.stringify({ error: "Internal server error." }));
@@ -188,7 +208,13 @@ export const reportsController = {
         ACCESS_TOKEN_SECRET as string,
       ) as JWTPayload;
     } catch (err: any) {
-      process.stderr.write(`[HTTP_REJECT] Invalid JWT: ${err.message}\n`);
+      // MODIFIED: Aggressive error logging for JWT failure
+      process.stderr.write(
+        `[HTTP_REJECT] Invalid JWT: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+      );
       res.statusCode = 401;
       res.end(JSON.stringify({ error: "Unauthorized token." }));
       return;
@@ -198,7 +224,13 @@ export const reportsController = {
     try {
       body = (await json(req)) as ChatMessageRequestDTO;
     } catch (err: any) {
-      process.stderr.write(`[HTTP_REJECT] Invalid JSON body.\n`);
+      // MODIFIED: Aggressive error logging for JSON body parsing failure
+      process.stderr.write(
+        `[HTTP_REJECT] Invalid JSON body: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+      );
       res.statusCode = 400;
       res.end(JSON.stringify({ error: "Invalid JSON body payload." }));
       return;
@@ -284,9 +316,10 @@ export const reportsController = {
         return;
       }
 
-      if (err.message === "AI_CLIENT_NOT_CONFIGURED") {
+      // MODIFIED: Replaced strict equality with .includes() since the service now appends descriptive error text
+      if (err.message && err.message.includes("AI_CLIENT_NOT_CONFIGURED")) {
         process.stderr.write(
-          `[HTTP_REJECT] AI client configuration missing in environment.\n`,
+          `[HTTP_REJECT] AI client configuration missing in environment: ${err.message}\n`,
         );
         res.statusCode = 500;
         res.end(
@@ -297,8 +330,27 @@ export const reportsController = {
         return;
       }
 
+      // ADDED: Explicit interception block to handle standard users lacking BYOK when global access is off
+      if (err.message && err.message.includes("MISSING_BYOK")) {
+        process.stderr.write(
+          `[HTTP_SHIELD] Rejected standard user chat message: ${err.message}\n`,
+        );
+        res.statusCode = 403;
+        res.end(
+          JSON.stringify({
+            error:
+              "Access Denied: Global access is disabled. You must configure a valid API key in your Account Settings to perform chats.",
+          }),
+        );
+        return;
+      }
+
+      // MODIFIED: Aggressive error logging for unhandled Chat Service failures
       process.stderr.write(
         `[HTTP_CRASH] Unhandled exception processing AI chat message: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
       );
       res.statusCode = 500;
       res.end(

@@ -1,8 +1,10 @@
-//src/components/pages/aiLab/ChatWithAI.tsx
+// src/components/pages/aiLab/ChatWithAI.tsx
 "use client";
 
 import { useState, useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   useGetChatHistoryQuery,
   useSendChatMessageMutation,
@@ -18,7 +20,7 @@ import CornerFlourish from "@/components/shared/CornerFlourish";
 interface ChatWithAIProps {
   reportId: string;
   engine: string;
-  findingId: string; // Strictly required
+  findingId: string;
 }
 
 export default function ChatWithAI({
@@ -29,13 +31,13 @@ export default function ChatWithAI({
   // --- STATE ---
   const [message, setMessage] = useState("");
   const [chatError, setChatError] = useState("");
+  const [lastAttemptedMessage, setLastAttemptedMessage] = useState("");
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Determine which catalog to use based on the engine
   const availableModels =
     engine === "claude" ? CLAUDE_MODEL_CATALOG : GEMINI_MODEL_CATALOG;
 
-  // Default to the fastest/cheapest model based on the catalog
   const defaultModelId =
     engine === "claude" ? "claude-haiku-4-5" : "gemini-2.5-flash";
   const [selectedModel, setSelectedModel] = useState<string>(defaultModelId);
@@ -57,29 +59,52 @@ export default function ChatWithAI({
   const [sendClaudeMessage, { isLoading: isClaudeSending }] =
     useSendClaudeChatMessageMutation();
 
-  // --- DERIVED DATA ---
   const history =
     engine === "claude" ? claudeData?.history : geminiData?.history;
   const isFetching = engine === "claude" ? isClaudeFetching : isGeminiFetching;
   const isSending = engine === "claude" ? isClaudeSending : isGeminiSending;
 
-  // Auto-scroll to bottom when new messages arrive
+  // Auto-scroll to bottom
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [history, isSending]);
 
+  // --- REAL ELAPSED TIMER ---
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout;
+
+    if (isSending) {
+      intervalId = setInterval(() => {
+        setElapsedSeconds((prev) => prev + 1);
+      }, 1000);
+    } else {
+      setElapsedSeconds(0);
+    }
+
+    return () => clearInterval(intervalId);
+  }, [isSending]);
+
   // --- HANDLERS ---
-  const handleSendMessage = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!message.trim() || isSending) return;
+  const handleSendMessage = async (msgOverride?: string | React.FormEvent) => {
+    // Prevent default if called from form submit
+    if (typeof msgOverride === "object" && "preventDefault" in msgOverride) {
+      msgOverride.preventDefault();
+      msgOverride = undefined;
+    }
+
+    const finalMessage = (
+      typeof msgOverride === "string" ? msgOverride : message
+    ).trim();
+    if (!finalMessage || isSending) return;
 
     setChatError("");
+    setLastAttemptedMessage(finalMessage); // Save for manual retry
 
     const payload = {
       reportId,
-      message: message.trim(),
+      message: finalMessage,
       selectedModel,
       findingId,
     };
@@ -90,10 +115,9 @@ export default function ChatWithAI({
       } else {
         await sendGeminiMessage(payload).unwrap();
       }
-      setMessage(""); // Clear input on success
+      setMessage(""); // Clear input only on success
+      setLastAttemptedMessage(""); // Clear retry state
     } catch (err: any) {
-      // REMOVED console.error() HERE so Next.js dev server stops hijacking the screen.
-      // Now it will gracefully drop down to the UI error box below.
       setChatError(
         err?.data?.error ||
           err?.error ||
@@ -174,25 +198,52 @@ export default function ChatWithAI({
               </span>
               <div
                 className={cn(
-                  "border-3 border-double p-3 text-xs font-medium whitespace-pre-wrap",
+                  "border-3 border-double p-3 text-xs font-medium",
                   msg.role === "user"
-                    ? "bg-card border-primary/50 text-foreground"
+                    ? "bg-card border-primary/50 text-foreground whitespace-pre-wrap"
                     : "bg-primary/5 border-primary text-primary",
                 )}
               >
-                {msg.message}
+                {msg.role === "user" ? (
+                  msg.message
+                ) : (
+                  <div className="prose prose-sm dark:prose-invert max-w-none prose-p:leading-snug prose-pre:bg-background prose-pre:border-2 prose-pre:border-primary/50 text-foreground">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {msg.message}
+                    </ReactMarkdown>
+                  </div>
+                )}
               </div>
             </div>
           ))
         )}
 
         {isSending && (
-          <div className="self-start flex flex-col max-w-[90%]">
+          <div className="self-start flex flex-col max-w-[90%] w-full">
             <span className="text-[10px] font-bold uppercase opacity-50 mb-1">
               AI ({engine})
             </span>
-            <div className="border-3 border-double border-primary bg-primary/5 text-primary p-3 text-xs font-medium">
-              <span className="animate-pulse">Processing request...</span>
+            <div
+              className={cn(
+                "border-3 border-double p-3 text-xs font-bold flex flex-col gap-1 transition-colors",
+                elapsedSeconds > 15
+                  ? "border-yellow-500 text-yellow-500 bg-yellow-500/10"
+                  : "border-primary text-primary bg-primary/10",
+              )}
+            >
+              <span className="animate-pulse">
+                {elapsedSeconds > 15
+                  ? "[ AI is running deep analysis... ]"
+                  : "[ Processing request... ]"}
+              </span>
+              <span className="opacity-80 font-medium">
+                {elapsedSeconds > 15
+                  ? "The AI provider is taking longer than expected. Please wait."
+                  : "Sending prompt to AI model."}
+              </span>
+              <span className="opacity-60 mt-1 font-mono text-[10px]">
+                Time elapsed: {elapsedSeconds}s
+              </span>
             </div>
           </div>
         )}
@@ -221,11 +272,26 @@ export default function ChatWithAI({
         </button>
       </form>
 
-      {/* ERROR BANNER (MOVED BELOW INPUT FORM) */}
+      {/* ERROR BANNER WITH MANUAL RETRY */}
       {chatError && (
-        <div className="border-t-3 border-double border-destructive bg-destructive/10 text-destructive text-[10px] font-bold p-3 uppercase flex flex-col gap-1">
-          <span className="animate-pulse">[ COMM LINK ERROR ]</span>
-          <span>{chatError}</span>
+        <div className="border-t-3 border-double border-destructive bg-destructive/10 p-3 flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center">
+          <div className="text-destructive text-[10px] font-bold uppercase flex flex-col gap-1">
+            <span className="animate-pulse">[ COMM LINK ERROR ]</span>
+            <span>{chatError}</span>
+          </div>
+
+          {lastAttemptedMessage && (
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                handleSendMessage(lastAttemptedMessage);
+              }}
+              disabled={isSending}
+              className="whitespace-nowrap border-3 border-double border-destructive text-destructive px-3 py-1 text-[10px] font-bold hover:bg-destructive hover:text-destructive-foreground transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              [ RETRY LAST MESSAGE ]
+            </button>
+          )}
         </div>
       )}
     </div>

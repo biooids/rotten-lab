@@ -16,8 +16,6 @@ export const claudeUrlScanSchema = z.object({
       message:
         "Please enter a valid website URL address (e.g., example.com or https://example.com).",
     }),
-  // Relaxed schema check: allows empty values for admins while parsing safely
-  secretAccessKey: z.string().optional().or(z.literal("")),
 });
 
 export const claudeRepoScanSchema = z.object({
@@ -29,8 +27,6 @@ export const claudeRepoScanSchema = z.object({
       message:
         "Invalid GitHub link. Expected format: github.com/username/reponame",
     }),
-  // Relaxed schema check: allows empty values for admins while parsing safely
-  secretAccessKey: z.string().optional().or(z.literal("")),
 });
 
 export type ClaudeUrlScanInput = z.infer<typeof claudeUrlScanSchema>;

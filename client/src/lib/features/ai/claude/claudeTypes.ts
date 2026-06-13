@@ -45,7 +45,6 @@ export const DEFAULT_CLAUDE_MODEL: ClaudeModelId = "claude-sonnet-4-6";
 
 export interface ScanRequestDTO {
   targetUrl: string;
-  secretAccessKey: string;
   model?: ClaudeModelId;
 }
 

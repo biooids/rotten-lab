@@ -1,4 +1,4 @@
-//src/features/admin/admin.service.ts
+// src/features/admin/admin.service.ts
 import { redisClient } from "../../db/redis.js";
 import { pool } from "../../db/psql.js";
 import type { UserRole } from "../auth/auth.types.js";
@@ -67,35 +67,43 @@ export const adminService = {
   },
 
   async getSystemSettings() {
-    const sql = `SELECT is_maintenance, maintenance_message FROM system_settings WHERE id = 1;`;
+    // MODIFIED: Added allow_global_gemini and allow_global_claude to the select payload
+    const sql = `SELECT is_maintenance, maintenance_message, allow_global_gemini, allow_global_claude FROM system_settings WHERE id = 1;`;
     return await pool.query(sql);
   },
 
+  // MODIFIED: Updated signature to accept allowGemini and allowClaude booleans
   async updateSystemSettings(
     isMaintenance: boolean,
     message: string,
+    allowGemini: boolean,
+    allowClaude: boolean,
     adminId: string,
   ) {
+    // MODIFIED: Expanded SQL update to hit the two new toggle columns explicitly
     const settingsSql = `
       UPDATE system_settings 
-      SET is_maintenance = $1, maintenance_message = $2, updated_by = $3
+      SET is_maintenance = $1, maintenance_message = $2, allow_global_gemini = $3, allow_global_claude = $4, updated_by = $5
       WHERE id = 1
-      RETURNING is_maintenance, maintenance_message, updated_at;
+      RETURNING is_maintenance, maintenance_message, allow_global_gemini, allow_global_claude, updated_at;
     `;
     const result = await pool.query(settingsSql, [
       isMaintenance,
       message,
+      allowGemini,
+      allowClaude,
       adminId,
     ]);
 
-    const actionName = isMaintenance ? "SYSTEM_LOCKED" : "SYSTEM_UNLOCKED";
+    // MODIFIED: Enhanced audit log text to track exactly what AI settings were explicitly enabled/disabled
+    const logDetails = `Maintenance: ${isMaintenance}, Msg: ${message}, Global Gemini: ${allowGemini}, Global Claude: ${allowClaude}`;
     const logSql = `
       INSERT INTO audit_logs (admin_id, admin_username, action, details)
-      SELECT $1, username, $2, $3 
+      SELECT $1, username, 'SYSTEM_SETTINGS_UPDATED', $2 
       FROM users 
       WHERE id = $1;
     `;
-    await pool.query(logSql, [adminId, actionName, message]);
+    await pool.query(logSql, [adminId, logDetails]);
 
     await redisClient.set(
       "maintenance:status",

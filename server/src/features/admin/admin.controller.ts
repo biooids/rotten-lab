@@ -5,7 +5,7 @@ import jwt from "jsonwebtoken";
 import { adminService } from "./admin.service.js";
 import type { JWTPayload } from "../auth/auth.types.js";
 import type {
-  UpdateMaintenanceDTO,
+  UpdateSystemSettingsDTO, // MODIFIED: Imported updated DTO name
   UpdateRoleDTO,
   SystemSettingsDTO,
   AdminUserDTO,
@@ -332,9 +332,9 @@ export const adminController = {
       return;
     }
 
-    let body: UpdateMaintenanceDTO;
+    let body: UpdateSystemSettingsDTO; // MODIFIED: Uses new explicit DTO
     try {
-      body = (await json(req)) as UpdateMaintenanceDTO;
+      body = (await json(req)) as UpdateSystemSettingsDTO;
     } catch (err) {
       process.stderr.write(
         `[updateSettings] JSON Parse Error: ${(err as Error).message}\nStack: ${(err as Error).stack}\n`,
@@ -353,6 +353,25 @@ export const adminController = {
         return;
       }
 
+      // ADDED: Explicit type checking for the two new global AI toggles
+      if (typeof body.allow_global_gemini !== "boolean") {
+        res.statusCode = 400;
+        res.setHeader("Content-Type", "application/json");
+        res.end(
+          JSON.stringify({ error: "allow_global_gemini must be a boolean" }),
+        );
+        return;
+      }
+
+      if (typeof body.allow_global_claude !== "boolean") {
+        res.statusCode = 400;
+        res.setHeader("Content-Type", "application/json");
+        res.end(
+          JSON.stringify({ error: "allow_global_claude must be a boolean" }),
+        );
+        return;
+      }
+
       if (
         !body.maintenance_message ||
         body.maintenance_message.length < 10 ||
@@ -366,9 +385,12 @@ export const adminController = {
         return;
       }
 
+      // MODIFIED: Injecting the boolean toggles down into the service layer
       const result = await adminService.updateSystemSettings(
         body.is_maintenance,
         body.maintenance_message,
+        body.allow_global_gemini,
+        body.allow_global_claude,
         decoded.id,
       );
 

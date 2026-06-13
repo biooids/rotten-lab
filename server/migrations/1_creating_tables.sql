@@ -96,12 +96,16 @@ CREATE TABLE system_settings (
     maintenance_message VARCHAR(500) NOT NULL 
         CHECK (char_length(maintenance_message) BETWEEN 10 AND 500)
         DEFAULT 'System is under maintenance. Protocols are being updated.',
+
+    allow_global_gemini BOOLEAN NOT NULL DEFAULT false,
+    allow_global_claude BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_by UUID REFERENCES users(id) ON DELETE SET NULL
 );
 
-INSERT INTO system_settings (id, is_maintenance) VALUES (1, false);
+INSERT INTO system_settings (id, is_maintenance, allow_global_gemini, allow_global_claude) 
+VALUES (1, false, false, false);
 
 -- --- 5.2. THE AUDIT LOGS TABLE ---
 CREATE TABLE audit_logs (

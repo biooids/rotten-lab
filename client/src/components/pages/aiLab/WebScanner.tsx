@@ -36,17 +36,11 @@ export default function WebScanner() {
   const [geminiModel, setGeminiModel] =
     useState<GeminiModelId>(DEFAULT_GEMINI_MODEL);
   const [targetUrl, setTargetUrl] = useState<string>("");
-  const [secretAccessKey, setSecretAccessKey] = useState<string>("");
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
   const user = useSelector((state: RootState) => state.auth?.user);
   const isAdminBypassed =
     user?.role === "admin" || user?.role === "super_admin";
-
-  const isMissingKey =
-    !isAdminBypassed &&
-    ((selectedEngine === "gemini" && !user?.hasGeminiKey) ||
-      (selectedEngine === "claude" && !user?.hasClaudeKey));
 
   const [scanGeminiUrl, { isLoading: isGeminiLoading }] = useScanUrlMutation();
   const [scanClaudeUrl, { isLoading: isClaudeLoading }] =
@@ -58,9 +52,7 @@ export default function WebScanner() {
     e.preventDefault();
     setFormErrors({});
 
-    if (isMissingKey) return;
-
-    const payload = { targetUrl, secretAccessKey };
+    const payload = { targetUrl };
 
     const schemaToUse =
       selectedEngine === "claude" ? claudeUrlScanSchema : urlScanSchema;
@@ -74,16 +66,6 @@ export default function WebScanner() {
         }
       }
       setFormErrors(fieldErrors);
-      return;
-    }
-
-    if (
-      !isAdminBypassed &&
-      (!secretAccessKey || secretAccessKey.trim() === "")
-    ) {
-      setFormErrors({
-        secretAccessKey: "Standard accounts require a valid Portfolio Key.",
-      });
       return;
     }
 
@@ -111,7 +93,7 @@ export default function WebScanner() {
       } else if (err?.status === 403) {
         global =
           err?.data?.error ||
-          "Access denied. A valid Portfolio Key is required for this scan.";
+          "Access denied. You do not have permission for this scan.";
       } else if (err?.status === 400) {
         global =
           err?.data?.error ||
@@ -135,7 +117,7 @@ export default function WebScanner() {
       <div className="max-w-4xl mx-auto space-y-6">
         <Button
           variant="outline"
-          className=" rounded-none border-3 border-double "
+          className="rounded-none border-3 border-double"
         >
           <Link href="/ai-lab" className="w-full">
             Back to Dashboard
@@ -208,39 +190,67 @@ export default function WebScanner() {
               </div>
             </div>
 
-            {/* ADDED: Admin/Super Admin Telemetry Posture Ribbon */}
+            {/* --- ADMIN BYPASS RIBBON --- */}
             {isAdminBypassed && (
               <div className="border-3 border-double border-primary/30 bg-primary/5 p-2 text-[11px] font-bold flex flex-wrap justify-between items-center gap-2">
-                <span className="text-primary uppercase">
-                  [ SECURITY BYPASS CONTROL ]
+                <span className="text-primary font-semibold">
+                  Admin Access Configured
                 </span>
                 <div className="flex gap-4">
                   <span>
-                    ACCESS SHIELD:{" "}
-                    <strong className="text-emerald-500">[ BYPASSED ]</strong>
+                    Permissions:{" "}
+                    <strong className="text-emerald-500">Admin Override</strong>
                   </span>
                   <span>
-                    CREDENTIAL FLIGHT:{" "}
+                    Active Key:{" "}
                     {selectedEngine === "gemini" ? (
                       user?.hasGeminiKey ? (
                         <strong className="text-blue-500">
-                          [ PERSONAL BYOK ]
+                          [ Personal API Key ]
                         </strong>
                       ) : (
                         <strong className="text-amber-500">
-                          [ CORE SERVER ENV fallback ]
+                          [ Server Default (.env) ]
                         </strong>
                       )
                     ) : user?.hasClaudeKey ? (
                       <strong className="text-orange-500">
-                        [ PERSONAL BYOK ]
+                        [ Personal API Key ]
                       </strong>
                     ) : (
                       <strong className="text-amber-500">
-                        [ CORE SERVER ENV fallback ]
+                        [ Server Default (.env) ]
                       </strong>
                     )}
                   </span>
+                </div>
+              </div>
+            )}
+
+            {/* --- STANDARD USER TELEMETRY RIBBON --- */}
+            {!isAdminBypassed && (
+              <div className="border-3 border-double border-muted/50 bg-muted/10 p-2 text-[11px] font-bold flex flex-wrap justify-between items-center gap-2">
+                <span className="opacity-70">Authentication Status</span>
+                <div className="flex gap-2">
+                  {selectedEngine === "gemini" ? (
+                    user?.hasGeminiKey ? (
+                      <span className="text-blue-500">
+                        [ Personal Key Active ]
+                      </span>
+                    ) : (
+                      <span className="text-amber-500">
+                        [ Using Global Server Key ]
+                      </span>
+                    )
+                  ) : user?.hasClaudeKey ? (
+                    <span className="text-orange-500">
+                      [ Personal Key Active ]
+                    </span>
+                  ) : (
+                    <span className="text-amber-500">
+                      [ Using Global Server Key ]
+                    </span>
+                  )}
                 </div>
               </div>
             )}
@@ -261,69 +271,26 @@ export default function WebScanner() {
               />
             )}
 
-            <div className="flex flex-col md:flex-row gap-4 mt-2">
-              <div className="flex-1 flex flex-col gap-1">
-                <label className="text-xs font-bold">Target URL</label>
-                <input
-                  type="text"
-                  disabled={isLoading}
-                  value={targetUrl}
-                  onChange={(e) => setTargetUrl(e.target.value)}
-                  placeholder="https://example.com"
-                  className="w-full bg-background border-3 border-double px-3 py-2 text-sm font-bold outline-none focus:border-primary disabled:opacity-50"
-                />
-                {formErrors.targetUrl && (
-                  <p className="text-destructive font-bold text-xs mt-1">
-                    {formErrors.targetUrl}
-                  </p>
-                )}
-              </div>
-
-              <div className="flex-1 flex flex-col gap-1">
-                <label className="text-xs font-bold">
-                  {isAdminBypassed ? "Bypass Token" : "Access Key"}
-                </label>
-                <input
-                  type="password"
-                  disabled={isLoading || isAdminBypassed}
-                  value={isAdminBypassed ? "" : secretAccessKey}
-                  onChange={(e) => setSecretAccessKey(e.target.value)}
-                  placeholder={isAdminBypassed ? "Admin Bypassed" : "Required"}
-                  className="w-full bg-background border-3 border-double px-3 py-2 text-sm font-bold outline-none focus:border-primary disabled:opacity-50"
-                />
-                {formErrors.secretAccessKey && (
-                  <p className="text-destructive font-bold text-xs mt-1">
-                    {formErrors.secretAccessKey}
-                  </p>
-                )}
-              </div>
+            <div className="flex flex-col gap-1 mt-2">
+              <label className="text-xs font-bold">Target URL</label>
+              <input
+                type="text"
+                disabled={isLoading}
+                value={targetUrl}
+                onChange={(e) => setTargetUrl(e.target.value)}
+                placeholder="https://example.com"
+                className="w-full bg-background border-3 border-double px-3 py-2 text-sm font-bold outline-none focus:border-primary disabled:opacity-50 transition-colors"
+              />
+              {formErrors.targetUrl && (
+                <p className="text-destructive font-bold text-xs mt-1">
+                  {formErrors.targetUrl}
+                </p>
+              )}
             </div>
-
-            {isMissingKey && (
-              <div className="border-3 border-double border-destructive bg-destructive/10 text-destructive p-4 text-xs font-bold flex flex-col items-center gap-2 text-center mt-2">
-                <span className="uppercase">
-                  [ SYSTEM LOCK ] Missing API Key for {selectedEngine}
-                </span>
-                <span className="opacity-80">
-                  You must configure a valid{" "}
-                  {selectedEngine === "gemini"
-                    ? "Google Gemini"
-                    : "Anthropic Claude"}{" "}
-                  API key to perform this scan.
-                </span>
-                {/* MODIFIED: Updated path to point precisely to '/me' avoiding 404 router issues */}
-                <Link
-                  href="/me"
-                  className="border-3 border-double border-destructive px-4 py-2 hover:bg-destructive hover:text-destructive-foreground transition-colors mt-2 uppercase"
-                >
-                  Configure in Account Settings
-                </Link>
-              </div>
-            )}
 
             <button
               type="submit"
-              disabled={isLoading || isMissingKey}
+              disabled={isLoading}
               className="w-full border-3 border-double bg-primary text-primary-foreground hover:bg-primary/90 font-bold text-xs py-3 disabled:opacity-50 transition-colors mt-2"
             >
               {isLoading
@@ -331,8 +298,9 @@ export default function WebScanner() {
                 : "Start Scan"}
             </button>
 
+            {/* If the user is missing a personal key AND global is blocked, the 403 error dumps directly here gracefully */}
             {formErrors.global && (
-              <div className="border-3 border-double border-destructive bg-destructive/10 text-destructive p-3 text-xs font-bold text-center">
+              <div className="border-3 border-double border-destructive bg-destructive/10 text-destructive p-3 text-xs font-bold text-center uppercase animate-in fade-in-50 duration-200">
                 {formErrors.global}
               </div>
             )}

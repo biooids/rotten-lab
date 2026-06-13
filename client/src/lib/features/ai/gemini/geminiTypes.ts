@@ -44,7 +44,6 @@ export const DEFAULT_GEMINI_MODEL: GeminiModelId = "gemini-2.5-flash";
 
 export interface ScanRequestDTO {
   targetUrl: string;
-  secretAccessKey: string;
   model?: GeminiModelId;
 }
 

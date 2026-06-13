@@ -1,4 +1,4 @@
-//src/features/admin/admin.types.ts
+// src/features/admin/admin.types.ts
 import type { UserRole } from "../auth/auth.types.js";
 
 export interface AdminUserDTO {
@@ -17,13 +17,19 @@ export interface UpdateRoleDTO {
 export interface SystemSettingsDTO {
   is_maintenance: boolean;
   maintenance_message: string;
+  // ADDED: Explicit booleans for global AI access
+  allow_global_gemini: boolean;
+  allow_global_claude: boolean;
   updated_at: string;
   updated_by?: string | null;
 }
 
-export interface UpdateMaintenanceDTO {
+// MODIFIED: Renamed to UpdateSystemSettingsDTO to be more accurate, and added AI toggles
+export interface UpdateSystemSettingsDTO {
   is_maintenance: boolean;
   maintenance_message: string;
+  allow_global_gemini: boolean;
+  allow_global_claude: boolean;
 }
 
 export interface AuditLogDTO {

@@ -3,6 +3,7 @@ import PDFDocument from "pdfkit";
 import { pool } from "../../../db/psql.js";
 import { GoogleGenAI } from "@google/genai";
 import Anthropic from "@anthropic-ai/sdk";
+import { setTimeout } from "node:timers/promises";
 import type {
   DatabaseReportContext,
   DatabaseFindingContext,
@@ -49,6 +50,9 @@ export const reportsService = {
       process.stderr.write(
         `[FATAL_DB_ERROR] Failed fetching report details for PDF. Report ID: ${reportId}, Admin ID: ${adminId}. Error: ${dbErr.message}\nStack: ${dbErr.stack}\n`,
       );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(dbErr, Object.getOwnPropertyNames(dbErr), 2)}\n`,
+      );
       throw dbErr;
     }
 
@@ -78,6 +82,9 @@ export const reportsService = {
     } catch (dbErr: any) {
       process.stderr.write(
         `[FATAL_DB_ERROR] Failed fetching findings for PDF. Report ID: ${reportId}. Error: ${dbErr.message}\nStack: ${dbErr.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(dbErr, Object.getOwnPropertyNames(dbErr), 2)}\n`,
       );
       throw dbErr;
     }
@@ -227,6 +234,9 @@ export const reportsService = {
         process.stderr.write(
           `[PDF_ENGINE_CRASH] Failed to compile document layout: ${pdfErr.message}\nStack: ${pdfErr.stack}\n`,
         );
+        process.stderr.write(
+          `[RAW_ERROR_DUMP] ${JSON.stringify(pdfErr, Object.getOwnPropertyNames(pdfErr), 2)}\n`,
+        );
         reject(pdfErr);
       }
     });
@@ -254,6 +264,9 @@ export const reportsService = {
       process.stderr.write(
         `[FATAL_DB_ERROR] Failed fetching chat history for report: ${reportId}, finding: ${findingId}. Error: ${err.message}\nStack: ${err.stack}\n`,
       );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+      );
       throw err;
     }
   },
@@ -279,6 +292,9 @@ export const reportsService = {
       process.stderr.write(
         `[FATAL_DB_ERROR] Failed resolving report for report: ${reportId}. Error: ${err.message}\nStack: ${err.stack}\n`,
       );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+      );
       throw err;
     }
 
@@ -298,19 +314,28 @@ export const reportsService = {
     let activeClient: any;
     try {
       const encryptionKey = process.env["DB_ENCRYPTION_KEY"] as string;
+
+      // MODIFIED: Parameterized $3 for ai_provider to fix Postgres errors, and added global fallback lookups from system_settings
       const userKeySql = `
         SELECT 
-          role,
+          u.role,
           CASE 
-            WHEN (ai_provider = 'claude' AND claude_api_key IS NOT NULL AND claude_api_key <> '') 
-                 OR (ai_provider = 'gemini' AND gemini_api_key IS NOT NULL AND gemini_api_key <> '') 
-            THEN pgp_sym_decrypt(dearmor(CASE WHEN ai_provider = 'claude' THEN claude_api_key ELSE gemini_api_key END), $2) 
+            WHEN ($3 = 'claude' AND u.claude_api_key IS NOT NULL AND u.claude_api_key <> '') 
+            THEN pgp_sym_decrypt(dearmor(u.claude_api_key), $2) 
+            WHEN ($3 = 'gemini' AND u.gemini_api_key IS NOT NULL AND u.gemini_api_key <> '') 
+            THEN pgp_sym_decrypt(dearmor(u.gemini_api_key), $2) 
             ELSE NULL 
-          END AS decrypted_key
-        FROM users 
-        WHERE id = $1;
+          END AS decrypted_key,
+          (SELECT allow_global_claude FROM system_settings WHERE id = 1) AS allow_global_claude,
+          (SELECT allow_global_gemini FROM system_settings WHERE id = 1) AS allow_global_gemini
+        FROM users u
+        WHERE u.id = $1;
       `;
-      const keyRes = await pool.query(userKeySql, [userId, encryptionKey]);
+      const keyRes = await pool.query(userKeySql, [
+        userId,
+        encryptionKey,
+        ai_provider,
+      ]);
 
       if (keyRes.rows.length === 0) {
         throw new Error(
@@ -321,6 +346,7 @@ export const reportsService = {
       const userRow = keyRes.rows[0];
 
       if (userRow.decrypted_key) {
+        // STANDARD USER / OVERRIDE: BYOK
         process.stdout.write(
           `[CHAT_AUTH] Spawning dynamic AI client using custom BYOK for user ${userId}.\n`,
         );
@@ -329,20 +355,57 @@ export const reportsService = {
             ? new Anthropic({ apiKey: userRow.decrypted_key })
             : new GoogleGenAI({ apiKey: userRow.decrypted_key });
       } else if (userRow.role === "admin" || userRow.role === "super_admin") {
+        // ADMIN: Global ENV key
         process.stdout.write(
           `[CHAT_AUTH] Routing to global environment AI client for admin ${userId}.\n`,
         );
         activeClient =
           ai_provider === "claude" ? globalAnthropicClient : globalGeminiClient;
         if (!activeClient) {
-          throw new Error("AI_CLIENT_NOT_CONFIGURED");
+          throw new Error(
+            "AI_CLIENT_NOT_CONFIGURED: Admin lacks BYOK and server lacks .env key.",
+          );
+        }
+      } else if (
+        ai_provider === "claude" &&
+        userRow.allow_global_claude === true
+      ) {
+        // ADDED: STANDARD USER FALLBACK TO GLOBAL CLAUDE
+        process.stdout.write(
+          `[CHAT_AUTH] Routing to global environment AI client for standard user ${userId} via system_settings permission (Claude).\n`,
+        );
+        activeClient = globalAnthropicClient;
+        if (!activeClient) {
+          throw new Error(
+            "AI_CLIENT_NOT_CONFIGURED: System allows global Claude, but server lacks .env key.",
+          );
+        }
+      } else if (
+        ai_provider === "gemini" &&
+        userRow.allow_global_gemini === true
+      ) {
+        // ADDED: STANDARD USER FALLBACK TO GLOBAL GEMINI
+        process.stdout.write(
+          `[CHAT_AUTH] Routing to global environment AI client for standard user ${userId} via system_settings permission (Gemini).\n`,
+        );
+        activeClient = globalGeminiClient;
+        if (!activeClient) {
+          throw new Error(
+            "AI_CLIENT_NOT_CONFIGURED: System allows global Gemini, but server lacks .env key.",
+          );
         }
       } else {
-        throw new Error("AI_CLIENT_NOT_CONFIGURED"); // Let the controller map this to a 403 or 500
+        // FATAL: Standard user, no key, no permission.
+        throw new Error(
+          `MISSING_BYOK: Standard user lacks personal key and global access for ${ai_provider} is disabled.`,
+        );
       }
     } catch (err: any) {
       process.stderr.write(
         `[CHAT_AUTH_FATAL] Failed to resolve API key: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
       );
       throw err;
     }
@@ -384,6 +447,9 @@ export const reportsService = {
       process.stderr.write(
         `[FATAL_DB_ERROR] Failed resolving finding context for finding ID: ${findingId}. Error: ${err.message}\nStack: ${err.stack}\n`,
       );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+      );
       throw err;
     }
 
@@ -412,6 +478,9 @@ export const reportsService = {
       process.stderr.write(
         `[FATAL_DB_ERROR] Failed inserting user message into DB. Payload size: ${userMessage.length}. Error: ${err.message}\nStack: ${err.stack}\n`,
       );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+      );
       throw err;
     }
 
@@ -423,6 +492,9 @@ export const reportsService = {
       process.stderr.write(
         `[CHAT_HISTORY_WARN] Failed to load chat history for context window. Proceeding with empty history. Error: ${err.message}\n`,
       );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+      );
     }
     const recentHistory = history.slice(-6);
 
@@ -431,49 +503,121 @@ export const reportsService = {
       `[CHAT_API] Dispatching prompt to ${ai_provider} (Model: ${finalModel})\n`,
     );
 
-    // 6. Route to correct provider with explicit error handling using the activeClient
-    try {
-      if (ai_provider === "claude") {
-        const messages = recentHistory.map((msg) => ({
-          role: msg.role === "user" ? "user" : "assistant",
-          content: msg.message,
-        })) as { role: "user" | "assistant"; content: string }[];
+    // 6. Route to correct provider with explicit micro-backoff error handling
+    let attempt = 0;
+    const MAX_RETRIES = 2; // Strict limit: 3 attempts total to prevent 504 timeouts on the frontend
+    const BASE_DELAY_MS = 2000; // 2 second delay (scales linearly)
 
-        const response = await activeClient.messages.create({
-          model: finalModel,
-          max_tokens: 1024,
-          system: systemContext,
-          messages: messages,
-        });
+    while (attempt <= MAX_RETRIES) {
+      try {
+        if (ai_provider === "claude") {
+          const messages = recentHistory.map((msg) => ({
+            role: msg.role === "user" ? "user" : "assistant",
+            content: msg.message,
+          })) as { role: "user" | "assistant"; content: string }[];
 
-        const textBlock = response.content.find(
-          (block: any) => block.type === "text",
+          const response = await activeClient.messages.create({
+            model: finalModel,
+            max_tokens: 1024,
+            system: systemContext,
+            messages: messages,
+          });
+
+          const textBlock = response.content.find(
+            (block: any) => block.type === "text",
+          );
+          aiReplyText =
+            textBlock && "text" in textBlock
+              ? textBlock.text
+              : "I could not generate a response.";
+        } else {
+          const contents = recentHistory.map((msg) => ({
+            role: msg.role === "user" ? "user" : "model",
+            parts: [{ text: msg.message }],
+          }));
+
+          const response = await activeClient.models.generateContent({
+            model: finalModel,
+            contents: contents,
+            config: {
+              systemInstruction: systemContext,
+            },
+          });
+
+          aiReplyText = response.text || "I could not generate a response.";
+        }
+
+        break; // SUCCESS! Break out of the retry while-loop.
+      } catch (aiErr: any) {
+        attempt++;
+        const httpStatus = aiErr?.status ?? aiErr?.response?.status ?? null;
+        const googleStatus = aiErr?.error?.status ?? aiErr?.code ?? null;
+        const anthropicErrorType =
+          aiErr?.error?.type ?? aiErr?.error?.error?.type ?? null;
+        const errMsgLower = String(aiErr?.message || "").toLowerCase();
+
+        // Immediate Failures (Bad API Key, Unauthorized) - Do not retry these!
+        const isAuthError =
+          httpStatus === 401 ||
+          httpStatus === 403 ||
+          errMsgLower.includes("api_key") ||
+          errMsgLower.includes("unauthorized") ||
+          errMsgLower.includes("forbidden");
+
+        if (isAuthError) {
+          process.stderr.write(
+            `[CHAT_AUTH_FATAL] Invalid API Key detected during chat generation for ${ai_provider}. Message: ${aiErr?.message}\n`,
+          );
+          process.stderr.write(
+            `[RAW_ERROR_DUMP] ${JSON.stringify(aiErr, Object.getOwnPropertyNames(aiErr), 2)}\n`,
+          );
+          throw new Error("AI_API_FAILURE");
+        }
+
+        // Retryable Failures
+        const isRateLimit =
+          httpStatus === 429 ||
+          googleStatus === "RESOURCE_EXHAUSTED" ||
+          anthropicErrorType === "rate_limit_error" ||
+          errMsgLower.includes("quota");
+
+        const isOverloaded =
+          httpStatus === 529 || anthropicErrorType === "overloaded_error";
+
+        const isServerError =
+          (typeof httpStatus === "number" && httpStatus >= 500) ||
+          errMsgLower.includes("5xx") ||
+          googleStatus === "UNAVAILABLE" ||
+          anthropicErrorType === "api_error";
+
+        const isNetworkError = [
+          "ECONNREFUSED",
+          "ENOTFOUND",
+          "ETIMEDOUT",
+          "AbortError",
+        ].includes(aiErr?.code || aiErr?.name);
+
+        if (
+          (isRateLimit || isOverloaded || isServerError || isNetworkError) &&
+          attempt <= MAX_RETRIES
+        ) {
+          const backoffMs = BASE_DELAY_MS * attempt;
+          process.stdout.write(
+            `[CHAT_RETRY_WARNING] AI Chat failed (${isRateLimit ? "429 Rate Limit" : "Server/Network Error"}). Retrying in ${backoffMs / 1000}s... (Attempt ${attempt}/${MAX_RETRIES})\n`,
+          );
+          await setTimeout(backoffMs);
+          continue; // Spin the loop again
+        }
+
+        // Exhausted Retries or completely unknown error
+        process.stderr.write(
+          `[FATAL_AI_ERROR] External API request to ${ai_provider} failed after ${attempt} attempts. Model: ${finalModel}. Error: ${aiErr?.message}\nStack: ${aiErr?.stack}\n`,
         );
-        aiReplyText =
-          textBlock && "text" in textBlock
-            ? textBlock.text
-            : "I could not generate a response.";
-      } else {
-        const contents = recentHistory.map((msg) => ({
-          role: msg.role === "user" ? "user" : "model",
-          parts: [{ text: msg.message }],
-        }));
-
-        const response = await activeClient.models.generateContent({
-          model: finalModel,
-          contents: contents,
-          config: {
-            systemInstruction: systemContext,
-          },
-        });
-
-        aiReplyText = response.text || "I could not generate a response.";
+        process.stderr.write(
+          `[RAW_ERROR_DUMP] ${JSON.stringify(aiErr, Object.getOwnPropertyNames(aiErr), 2)}\n`,
+        );
+        throw new Error("AI_API_FAILURE");
       }
-    } catch (aiErr: any) {
-      process.stderr.write(
-        `[FATAL_AI_ERROR] External API request to ${ai_provider} failed. Model: ${finalModel}. Error: ${aiErr.message}\nStack: ${aiErr.stack}\n`,
-      );
-      throw new Error("AI_API_FAILURE");
     }
 
     // --- DEFENSIVE SAFEGUARD: TRUNCATION BEFORE DB INSERT ---
@@ -497,6 +641,9 @@ export const reportsService = {
     } catch (err: any) {
       process.stderr.write(
         `[FATAL_DB_ERROR] Failed inserting AI response into DB. Truncated Payload Size: ${aiReplyText.length}. Error: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
       );
       throw err;
     }

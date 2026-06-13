@@ -15,4 +15,7 @@ export const updateMaintenanceSchema = z.object({
     .string()
     .min(10, "Message must be at least 10 characters.")
     .max(500, "Message cannot exceed 500 characters."),
+
+  allow_global_gemini: z.boolean(),
+  allow_global_claude: z.boolean(),
 });

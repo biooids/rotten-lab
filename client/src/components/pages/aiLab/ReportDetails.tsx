@@ -254,11 +254,11 @@ export default function ReportDetails({
                   : "text-blue-500 border-blue-500 bg-blue-500/10",
               )}
             >
-              ENGINE: {engine}
+              Engine: {engine.toUpperCase()}
             </span>
             {activeReport?.ai_model && (
               <span className="text-[10px] font-bold border-3 border-double px-2 py-1  opacity-80">
-                MODEL: {activeReport.ai_model}
+                Model: {activeReport.ai_model}
               </span>
             )}
             <span
@@ -271,7 +271,7 @@ export default function ReportDetails({
                     : "border-primary text-primary",
               )}
             >
-              Status: {activeReport?.status || "CONNECTING..."}
+              Status: {activeReport?.status || "Connecting..."}
             </span>
           </div>
         </div>
@@ -300,7 +300,7 @@ export default function ReportDetails({
               onClick={() => setPollInterval(3000)}
               className="self-start border-3 border-double px-3 py-1 text-xs font-bold hover:bg-primary hover:text-primary-foreground transition-colors"
             >
-              [ Retry polling ]
+              Retry
             </button>
           </div>
         )}
@@ -312,14 +312,14 @@ export default function ReportDetails({
               title={
                 totalChunks > 0
                   ? `Analyzing code... (Processed Chunk ${completedChunks} of ${totalChunks})`
-                  : "Resolving target and generating AST payload..."
+                  : "Preparing scan..."
               }
             />
 
             {totalChunks > 0 && remainingChunks > 0 && (
               <div className="flex flex-col gap-2">
                 <div className="flex items-center justify-between text-xs font-bold border-3 border-double p-3 bg-background">
-                  <span>ESTIMATED TIME REMAINING:</span>
+                  <span>Estimated Time Remaining:</span>
                   <span
                     className={cn(
                       isRetrying
@@ -336,12 +336,11 @@ export default function ReportDetails({
                 {/* DYNAMIC BACKEND STATE INDICATOR */}
                 {isRetrying ? (
                   <div className="border-3 border-double border-yellow-500 text-yellow-500 bg-yellow-500/10 p-4 text-xs font-bold animate-pulse flex flex-col gap-1">
-                    <span>[ AI PROVIDER OVERLOADED / RATE LIMITED ]</span>
+                    <span>Connection Delayed / Retrying</span>
                     <span className="opacity-80">
-                      The AI API is struggling to respond. Our backend worker
-                      has caught the failure and is currently running an
-                      exponential backoff retry loop. Do not close this page—the
-                      system is self-healing.
+                      The AI provider is taking longer to respond than expected.
+                      Our server is automatically retrying. Please keep this
+                      page open.
                     </span>
                     <span className="opacity-60 mt-2 font-mono text-[10px]">
                       Time elapsed on current chunk: {secondsSinceUpdate}s
@@ -349,11 +348,11 @@ export default function ReportDetails({
                   </div>
                 ) : (
                   <div className="border-3 border-double border-primary text-primary bg-primary/10 p-4 text-xs font-bold text-center flex flex-col gap-1">
-                    <span>[ API RATE LIMIT PROTOCOL ACTIVE ]</span>
+                    <span>Rate Limit Pause</span>
                     <span className="opacity-80">
-                      Processing chunk {completedChunks + 1}. The AI thread
-                      sleeps for ~60 seconds between chunks to bypass free-tier
-                      rate limits securely.
+                      Processing chunk {completedChunks + 1}. The scanner pauses
+                      for about 60 seconds between chunks to comply with AI rate
+                      limits.
                     </span>
                   </div>
                 )}
@@ -372,7 +371,8 @@ export default function ReportDetails({
               <div className="flex flex-col gap-2 items-end">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="whitespace-nowrap bg-primary text-primary-foreground px-2 py-1 border-3 border-double">
-                    Anomalies Found: {meta?.totalItems || activeFindings.length}
+                    Vulnerabilities Found:{" "}
+                    {meta?.totalItems || activeFindings.length}
                   </span>
                   <button
                     type="button"
@@ -380,18 +380,18 @@ export default function ReportDetails({
                     disabled={isPdfLoading}
                     className="whitespace-nowrap border-3 border-double px-3 py-1 hover:bg-primary hover:text-primary-foreground disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-foreground transition-colors cursor-pointer"
                   >
-                    {isPdfLoading ? "[ DOWNLOADING... ]" : "[ DOWNLOAD PDF ]"}
+                    {isPdfLoading ? "Downloading..." : "Download PDF"}
                   </button>
                 </div>
 
                 {downloadStatus === "success" && (
                   <div className="text-[10px] font-bold border-3 border-double border-primary text-primary bg-primary/10 px-2 py-1">
-                    [ SUCCESS ] PDF downloaded securely.
+                    PDF downloaded successfully.
                   </div>
                 )}
                 {downloadStatus === "error" && (
                   <div className="text-[10px] font-bold border-3 border-double border-destructive text-destructive bg-destructive/10 px-2 py-1 flex flex-col text-right">
-                    <span>[ FAILED ] Could not download PDF.</span>
+                    <span>Failed to download PDF.</span>
                     <span className="opacity-80">{downloadErrorMsg}</span>
                   </div>
                 )}
@@ -416,14 +416,13 @@ export default function ReportDetails({
 
             {activeFindings.length === 0 ? (
               <div className="border-3 border-double p-8 text-center text-sm font-bold bg-primary/5 text-primary">
-                Zero vulnerabilities detected during static analysis. Secure for
-                deployment.
+                No vulnerabilities detected during the scan.
               </div>
             ) : (
               <div className="flex flex-col gap-4">
                 {/* NEW: GROUPING TOGGLE BAR */}
                 <div className="flex items-center justify-between border-3 border-double bg-background p-3">
-                  <span className="text-xs font-bold">VIEW MODE:</span>
+                  <span className="text-xs font-bold">View Mode:</span>
                   <button
                     onClick={() => setGroupSimilar(!groupSimilar)}
                     className={cn(
@@ -433,7 +432,7 @@ export default function ReportDetails({
                         : "hover:bg-primary hover:text-primary-foreground",
                     )}
                   >
-                    {groupSimilar ? "[ GROUPED BY TYPE ]" : "[ RAW FINDINGS ]"}
+                    {groupSimilar ? "Grouped by Type" : "Raw Findings"}
                   </button>
                 </div>
 
@@ -456,10 +455,10 @@ export default function ReportDetails({
                       disabled={page === 1}
                       className="border-3 border-double px-3 py-1 text-xs font-bold hover:bg-primary hover:text-primary-foreground disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-foreground transition-colors"
                     >
-                      [ &lt; PREV ]
+                      Previous
                     </button>
                     <span className="text-xs font-bold">
-                      PAGE {meta.currentPage} OF {meta.totalPages}
+                      Page {meta.currentPage} of {meta.totalPages}
                     </span>
                     <button
                       onClick={() =>
@@ -468,7 +467,7 @@ export default function ReportDetails({
                       disabled={page === meta.totalPages}
                       className="border-3 border-double px-3 py-1 text-xs font-bold hover:bg-primary hover:text-primary-foreground disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-foreground transition-colors"
                     >
-                      [ NEXT &gt; ]
+                      Next
                     </button>
                   </div>
                 )}
@@ -490,8 +489,7 @@ export default function ReportDetails({
                 )
               ) : (
                 <li>
-                  Background worker crashed or timed out during target
-                  resolution.
+                  The scanner crashed or timed out while fetching the target.
                 </li>
               )}
             </ul>
