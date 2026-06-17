@@ -190,7 +190,6 @@ export const gitScannerService = {
         `[GIT_SCAN_IGNORE_CONFIG] Generating strict dynamic .semgrepignore file...\n`,
       );
 
-      // UPDATED IGNORE CONFIG: Removed Section 5 (Tests/Coverage) so vulnerabilities in test folders get caught
       const ignoreContent = `
 # 1. CRITICAL: Force Semgrep to respect the project's .gitignore
 :include .gitignore
@@ -249,7 +248,6 @@ Thumbs.db
         `[GIT_SCAN_EXECUTE] [${new Date().toISOString()}] Invoking Parallel Scanner Engines (Semgrep, Gitleaks, Trivy)...\n`,
       );
 
-      // Execute all 3 CLI tools concurrently. We use allSettled because non-zero exit codes (finding bugs) throw errors in execFileAsync.
       const scanPromises = [
         execFileAsync(
           "semgrep",
@@ -331,11 +329,49 @@ Thumbs.db
                 translatedSeverity = "Medium";
               else if (rawSeverityString === "INFO") translatedSeverity = "Low";
 
+              // --- START RAW CONTEXT EXPANSION (SEMGREP) ---
+              let expandedSnippet = `Details: ${targetExtra.message || "No description"}\n\nCode context:\n${targetExtra.lines || ""}`;
+              try {
+                const absoluteTargetFilePath = path.join(
+                  workspacePath,
+                  relativePath,
+                );
+                if (fs.existsSync(absoluteTargetFilePath)) {
+                  const rawFileContents = fs.readFileSync(
+                    absoluteTargetFilePath,
+                    "utf8",
+                  );
+                  const fileLines = rawFileContents.split("\n");
+
+                  // Extract line number from Semgrep object, default to 1 if missing
+                  const targetLineNumber = targetFinding.start?.line || 1;
+
+                  // Grab ~25 lines above and ~25 lines below
+                  const startIndex = Math.max(0, targetLineNumber - 26);
+                  const endIndex = Math.min(
+                    fileLines.length,
+                    targetLineNumber + 25,
+                  );
+                  const contextLines = fileLines.slice(startIndex, endIndex);
+
+                  expandedSnippet = `Details: ${targetExtra.message || "No description"}\n\nExpanded Context Window (approx 50 lines):\n${contextLines.join("\n")}`;
+                }
+              } catch (readErr: any) {
+                process.stderr.write(
+                  `[SEMGREP_CONTEXT_ERROR] Failed to read disk for 50-line expansion on file: ${relativePath}\n`,
+                );
+                process.stderr.write(
+                  `[RAW_ERROR_DUMP] ${JSON.stringify(readErr, Object.getOwnPropertyNames(readErr), 2)}\n`,
+                );
+                // It will naturally fall back to the original short snippet if this fails.
+              }
+              // --- END RAW CONTEXT EXPANSION ---
+
               findings.push({
                 file_path: relativePath,
                 vulnerability_name: `Code Flaw: ${ruleIdName}`,
                 severity: translatedSeverity,
-                code_snippet: `Details: ${targetExtra.message || "No description"}\n\nCode context:\n${targetExtra.lines || ""}`,
+                code_snippet: expandedSnippet,
               });
             }
           }
@@ -363,11 +399,48 @@ Thumbs.db
                 workspacePath + "/",
                 "",
               );
+
+              // --- START RAW CONTEXT EXPANSION (GITLEAKS) ---
+              let expandedSnippet = `Match string: ${leak.Match}\nLocated on Line: ${leak.StartLine || "Unknown"}`;
+              try {
+                const absoluteTargetFilePath = path.join(
+                  workspacePath,
+                  relativePath,
+                );
+                if (fs.existsSync(absoluteTargetFilePath) && leak.StartLine) {
+                  const rawFileContents = fs.readFileSync(
+                    absoluteTargetFilePath,
+                    "utf8",
+                  );
+                  const fileLines = rawFileContents.split("\n");
+
+                  const targetLineNumber = parseInt(leak.StartLine, 10);
+
+                  // Grab ~25 lines above and ~25 lines below
+                  const startIndex = Math.max(0, targetLineNumber - 26);
+                  const endIndex = Math.min(
+                    fileLines.length,
+                    targetLineNumber + 25,
+                  );
+                  const contextLines = fileLines.slice(startIndex, endIndex);
+
+                  expandedSnippet = `Match string: ${leak.Match}\nLocated on Line: ${leak.StartLine}\n\nExpanded Context Window (approx 50 lines):\n${contextLines.join("\n")}`;
+                }
+              } catch (readErr: any) {
+                process.stderr.write(
+                  `[GITLEAKS_CONTEXT_ERROR] Failed to read disk for 50-line expansion on file: ${relativePath}\n`,
+                );
+                process.stderr.write(
+                  `[RAW_ERROR_DUMP] ${JSON.stringify(readErr, Object.getOwnPropertyNames(readErr), 2)}\n`,
+                );
+              }
+              // --- END RAW CONTEXT EXPANSION ---
+
               findings.push({
                 file_path: relativePath,
                 vulnerability_name: `Exposed Secret: ${leak.Description || "Hardcoded Key"}`,
                 severity: "Critical",
-                code_snippet: `Match string: ${leak.Match}\nLocated on Line: ${leak.StartLine || "Unknown"}`,
+                code_snippet: expandedSnippet,
               });
             }
           }
@@ -405,11 +478,40 @@ Thumbs.db
                 else if (tSev === "LOW" || tSev === "UNKNOWN")
                   mappedSev = "Low";
 
+                // --- START RAW CONTEXT EXPANSION (TRIVY) ---
+                let expandedSnippet = `Package: ${vuln.PkgName}\nInstalled Version: ${vuln.InstalledVersion}\nFixed in: ${vuln.FixedVersion || "No fix available"}\nDescription: ${vuln.Title || vuln.Description || "N/A"}`;
+                try {
+                  const absoluteTargetFilePath = path.join(
+                    workspacePath,
+                    relativePath,
+                  );
+                  if (fs.existsSync(absoluteTargetFilePath)) {
+                    const rawFileContents = fs.readFileSync(
+                      absoluteTargetFilePath,
+                      "utf8",
+                    );
+                    const fileLines = rawFileContents.split("\n");
+
+                    // Since Trivy hits dependency manifests (package.json, go.mod), we just grab the first 50 lines
+                    // of the manifest to give the AI the environmental context of the package.
+                    const contextLines = fileLines.slice(0, 50);
+                    expandedSnippet += `\n\nManifest Context Window (First 50 lines):\n${contextLines.join("\n")}`;
+                  }
+                } catch (readErr: any) {
+                  process.stderr.write(
+                    `[TRIVY_CONTEXT_ERROR] Failed to read disk for manifest expansion on file: ${relativePath}\n`,
+                  );
+                  process.stderr.write(
+                    `[RAW_ERROR_DUMP] ${JSON.stringify(readErr, Object.getOwnPropertyNames(readErr), 2)}\n`,
+                  );
+                }
+                // --- END RAW CONTEXT EXPANSION ---
+
                 findings.push({
                   file_path: relativePath,
                   vulnerability_name: `Vulnerable Dependency: ${vuln.PkgName} (${vuln.VulnerabilityID})`,
                   severity: mappedSev,
-                  code_snippet: `Package: ${vuln.PkgName}\nInstalled Version: ${vuln.InstalledVersion}\nFixed in: ${vuln.FixedVersion || "No fix available"}\nDescription: ${vuln.Title || vuln.Description || "N/A"}`,
+                  code_snippet: expandedSnippet,
                 });
               }
             }
