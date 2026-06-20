@@ -1,4 +1,4 @@
-// src/features/auth/auth.routes.ts
+//src/features/auth/auth.routes.ts
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { authController } from "./auth.controller.js";
 
@@ -24,7 +24,6 @@ export const authRoutes = async ({
     return true;
   }
 
-  // --- NEW: Token Refresh Endpoint ---
   if (
     pathname === "/api/v1/auth/refresh" &&
     (req.method === "POST" || req.method === "GET")

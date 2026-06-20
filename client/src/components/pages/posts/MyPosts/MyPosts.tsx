@@ -1,3 +1,4 @@
+//src/components/pages/posts/MyPosts/MyPosts.tsx
 "use client";
 
 import React, { useState, useMemo, useEffect } from "react";

@@ -1,5 +1,5 @@
 //src/features/api.routes.ts
-// STATUS: Modified. Added aggressive raw error stringification inside health check catch block.
+
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { pool } from "../db/psql.js";
 import { redisClient } from "../db/redis.js";
@@ -44,7 +44,6 @@ export const apiRoutes = async ({
         }) + "\n",
       );
 
-      // MODIFIED: Added raw object property dump to guarantee complete error telemetry visibility
       process.stderr.write(
         `[HEALTH_CRASH_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
       );

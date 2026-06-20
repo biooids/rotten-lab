@@ -19,7 +19,7 @@ export default function HomeCard() {
       )}
     >
       <div className="flex gap-1 items-center text-primary ">
-        <Home className="h-5 w-5 " />
+        {/* <Home className="h-5 w-5 " /> */}
         <h3>Home & About</h3>
       </div>
 

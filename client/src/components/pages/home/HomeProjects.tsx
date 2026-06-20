@@ -62,7 +62,6 @@ export default function HomeProjects() {
       <CornerFlourish className="-bottom-1 -right-1 rotate-180" />
 
       <div className="flex gap-1 items-center text-primary">
-        <FlaskConical className="h-5 w-5" />
         <h4 className="bg-primary text-primary-foreground font-bold p-1 w-fit">
           Serious projects :
         </h4>

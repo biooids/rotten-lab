@@ -182,7 +182,6 @@ export default function ContactPage() {
         <CornerFlourish className="-bottom-1 -right-1 rotate-180" />
 
         <div className="flex gap-1 items-center text-primary">
-          <AlertTriangle className="h-4 w-4" />
           <h4 className="bg-primary text-primary-foreground font-bold p-1 w-fit text-sm">
             What to Expect
           </h4>

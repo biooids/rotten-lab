@@ -92,6 +92,13 @@ function BioAndSkills() {
             </p>
           ))}
         </div>
+
+        <div className="flex justify-between">
+          {/* <div className="border-3 border-double p-1 shrink-0">
+                <link.icon className="h-5 w-5 text-primary" />
+              </div> */}
+          <span>linked in</span>
+        </div>
       </div>
 
       {/* Card 2: Skills & Languages */}

@@ -35,7 +35,7 @@ export default function Header() {
             <span className="text-xs font-bold">Welcome, {user.username}</span>
             <span
               className={cn(
-                "text-[9px] font-black tracking-widest uppercase px-1.5 py-0.5 border-3 border-double selection:bg-transparent",
+                "text-[9px] font-black tracking-widest  px-1.5 py-0.5 border-3 border-double selection:bg-transparent",
                 user.role === "super_admin" &&
                   "bg-primary text-primary-foreground border-primary",
                 user.role === "admin" &&

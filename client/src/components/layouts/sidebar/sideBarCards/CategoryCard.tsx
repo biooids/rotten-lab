@@ -1,3 +1,4 @@
+//src/components/layouts/sidebar/sideBarCards/CategoryCard.tsx
 "use client";
 
 import { Button } from "@/components/ui/button";
@@ -84,9 +85,9 @@ export default function CategoryCard() {
             )}
           >
             <div className="flex gap-1 items-center  text-primary ">
-              <span className="border-3 border-double p-1">
+              {/* <span className="border-3 border-double p-1">
                 <cat.icon className="h-5 w-5" />
-              </span>
+              </span> */}
               <h3>{cat.title}</h3>
             </div>
 

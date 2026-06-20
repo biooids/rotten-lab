@@ -23,129 +23,161 @@ const IMAGE_REGEX = /\.(jpeg|jpg|gif|png|webp|avif)$/i;
 
 export const postsController = {
   async uploadMedia(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      res.statusCode = 401;
-      res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: "Unauthorized" }));
-      return;
-    }
-
-    let decoded: JWTPayload;
     try {
-      decoded = jwt.verify(
-        authHeader.split(" ")[1] as string,
-        ACCESS_TOKEN_SECRET as string,
-      ) as JWTPayload;
-    } catch {
-      res.statusCode = 401;
-      res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: "Invalid token" }));
-      return;
-    }
-
-    // --- MANUAL REDIS RATE LIMITING (Max 10 uploads per hour per user) ---
-    try {
-      const uploadLimitKey = `ratelimit:upload:${decoded.id}`;
-      const uploadsCount = await redisClient.incr(uploadLimitKey);
-
-      if (uploadsCount === 1) {
-        await redisClient.expire(uploadLimitKey, 3600); // 1 hour TTL
-      }
-
-      if (uploadsCount > 10) {
-        res.statusCode = 429;
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        res.statusCode = 401;
         res.setHeader("Content-Type", "application/json");
-        res.end(
-          JSON.stringify({
-            error:
-              "Upload limit exceeded. Maximum 10 media uploads per hour to prevent storage abuse.",
-          }),
-        );
-        return;
-      }
-    } catch (err: any) {
-      process.stderr.write(`[uploadMedia] Redis Error: ${err.message}\n`);
-      // Fail open if Redis crashes so legitimate users can still upload
-    }
-    // ---------------------------------------------------------------------
-
-    const bb = Busboy({
-      headers: req.headers,
-      limits: { files: 1, fileSize: 5 * 1024 * 1024 },
-    });
-
-    let fileProcessed = false;
-
-    bb.on("file", (_name, file, info) => {
-      fileProcessed = true;
-      if (!info.mimeType.startsWith("image/")) {
-        res.statusCode = 415;
-        res.setHeader("Content-Type", "application/json");
-        res.end(JSON.stringify({ error: "Only images allowed" }));
-        file.resume();
+        res.end(JSON.stringify({ error: "Unauthorized" }));
         return;
       }
 
-      file.on("data", function checkMagic(chunk) {
-        const hex = chunk.toString("hex", 0, 4).toUpperCase();
-        const signatures: Record<string, string> = {
-          "89504E47": "png",
-          FFD8FF: "jpg",
-          "47494638": "gif",
-          "52494646": "webp",
-        };
-        const isValid = Object.keys(signatures).some((sig) =>
-          hex.startsWith(sig),
+      let decoded: JWTPayload;
+      try {
+        decoded = jwt.verify(
+          authHeader.split(" ")[1] as string,
+          ACCESS_TOKEN_SECRET as string,
+        ) as JWTPayload;
+      } catch (err: any) {
+        process.stderr.write(
+          `[uploadMedia] JWT Verify Error: ${err.message}\n`,
         );
+        res.statusCode = 401;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ error: `Invalid token: ${err.message}` }));
+        return;
+      }
 
-        if (!isValid) {
-          file.destroy(new Error("INVALID_MAGIC_NUMBER"));
+      // --- MANUAL REDIS RATE LIMITING (Max 10 uploads per hour per user) ---
+      try {
+        const uploadLimitKey = `ratelimit:upload:${decoded.id}`;
+        const uploadsCount = await redisClient.incr(uploadLimitKey);
+
+        if (uploadsCount === 1) {
+          await redisClient.expire(uploadLimitKey, 3600); // 1 hour TTL
         }
-        file.removeListener("data", checkMagic);
+
+        if (uploadsCount > 10) {
+          res.statusCode = 429;
+          res.setHeader("Content-Type", "application/json");
+          res.end(
+            JSON.stringify({
+              error:
+                "Upload limit exceeded. Maximum 10 media uploads per hour to prevent storage abuse.",
+            }),
+          );
+          return;
+        }
+      } catch (err: any) {
+        process.stderr.write(
+          `[uploadMedia] Redis Error: ${err.message}\nStack: ${err.stack}\n`,
+        );
+        // Fail open if Redis crashes so legitimate users can still upload
+      }
+      // ---------------------------------------------------------------------
+
+      const bb = Busboy({
+        headers: req.headers,
+        limits: { files: 1, fileSize: 5 * 1024 * 1024 },
       });
 
-      file.on("error", (err) => {
-        if (err.message === "INVALID_MAGIC_NUMBER" && !res.writableEnded) {
+      // --- FIX: Prevent memory leak if client drops connection ---
+      req.on("aborted", () => {
+        process.stderr.write(
+          `[uploadMedia] Client aborted connection midway. Destroying stream to clear memory.\n`,
+        );
+        req.unpipe(bb);
+      });
+
+      let fileProcessed = false;
+
+      bb.on("file", (_name, file, info) => {
+        fileProcessed = true;
+        if (!info.mimeType.startsWith("image/")) {
           res.statusCode = 415;
           res.setHeader("Content-Type", "application/json");
-          res.end(JSON.stringify({ error: "Spoofed file type detected" }));
+          res.end(JSON.stringify({ error: "Only images allowed" }));
+          file.resume();
+          return;
+        }
+
+        file.on("data", function checkMagic(chunk) {
+          const hex = chunk.toString("hex", 0, 4).toUpperCase();
+          const signatures: Record<string, string> = {
+            "89504E47": "png",
+            FFD8FF: "jpg",
+            "47494638": "gif",
+            "52494646": "webp",
+          };
+          const isValid = Object.keys(signatures).some((sig) =>
+            hex.startsWith(sig),
+          );
+
+          if (!isValid) {
+            file.destroy(new Error("INVALID_MAGIC_NUMBER"));
+          }
+          file.removeListener("data", checkMagic);
+        });
+
+        file.on("error", (err: any) => {
+          process.stderr.write(
+            `[uploadMedia] Busboy File Error: ${err.message}\n`,
+          );
+          if (err.message === "INVALID_MAGIC_NUMBER" && !res.writableEnded) {
+            res.statusCode = 415;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "Spoofed file type detected" }));
+          }
+        });
+
+        const uploadStream = mediaStorage.uploader.upload_stream(
+          {
+            folder: "portfolio/posts",
+            resource_type: "auto",
+            allowed_formats: ["jpg", "jpeg", "png", "webp", "gif"],
+          },
+          (error, result) => {
+            if (error) {
+              process.stderr.write(
+                `[uploadMedia] Cloudinary Error: ${error.message}\n`,
+              );
+              if (!res.writableEnded) {
+                res.statusCode = 500;
+                res.setHeader("Content-Type", "application/json");
+                res.end(
+                  JSON.stringify({ error: `Upload failed: ${error.message}` }),
+                );
+              }
+              return;
+            }
+            if (result && !res.writableEnded) {
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ url: result.secure_url }));
+            }
+          },
+        );
+
+        file.pipe(uploadStream);
+      });
+
+      bb.on("finish", () => {
+        if (!fileProcessed && !res.writableEnded) {
+          res.statusCode = 400;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ error: "No file uploaded" }));
         }
       });
 
-      const uploadStream = mediaStorage.uploader.upload_stream(
-        {
-          folder: "portfolio/posts",
-          resource_type: "auto",
-          allowed_formats: ["jpg", "jpeg", "png", "webp", "gif"],
-        },
-        (error, result) => {
-          if (error && !res.writableEnded) {
-            res.statusCode = 500;
-            res.setHeader("Content-Type", "application/json");
-            res.end(JSON.stringify({ error: "Upload failed" }));
-            return;
-          }
-          if (result && !res.writableEnded) {
-            res.statusCode = 200;
-            res.setHeader("Content-Type", "application/json");
-            res.end(JSON.stringify({ url: result.secure_url }));
-          }
-        },
+      req.pipe(bb);
+    } catch (err: any) {
+      process.stderr.write(
+        `[uploadMedia] CRITICAL FATAL ERROR: ${err.message}\nStack: ${err.stack}\n`,
       );
-
-      file.pipe(uploadStream);
-    });
-
-    bb.on("finish", () => {
-      if (!fileProcessed && !res.writableEnded) {
-        res.statusCode = 400;
-        res.setHeader("Content-Type", "application/json");
-        res.end(JSON.stringify({ error: "No file uploaded" }));
-      }
-    });
-
-    req.pipe(bb);
+      res.statusCode = 500;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ error: err.message }));
+    }
   },
 
   async getAllPosts(
@@ -156,24 +188,26 @@ export const postsController = {
     try {
       const page = parseInt(url.searchParams.get("page") || "1", 10);
       const limit = 12;
+
       const results = await postsService.getAllPosts(page, limit);
-      const totalCount =
-        results.rows.length > 0 ? parseInt(results.rows[0].full_count, 10) : 0;
 
       res.statusCode = 200;
       res.setHeader("Content-Type", "application/json");
       res.end(
         JSON.stringify({
           posts: results.rows,
-          total: totalCount,
+          total: results.totalCount,
           page: page,
-          totalPages: Math.ceil(totalCount / limit),
+          totalPages: Math.ceil(results.totalCount / limit),
         }),
       );
     } catch (err: any) {
+      process.stderr.write(
+        `[getAllPosts] ERROR: ${err.message}\nStack: ${err.stack}\n`,
+      );
       res.statusCode = 500;
       res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: "Failed to fetch posts" }));
+      res.end(JSON.stringify({ error: err.message }));
     }
   },
 
@@ -194,9 +228,12 @@ export const postsController = {
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify({ post: results.rows[0] }));
     } catch (err: any) {
+      process.stderr.write(
+        `[getPost] ERROR: ${err.message}\nStack: ${err.stack}\n`,
+      );
       res.statusCode = 500;
       res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: "Retrieval failed" }));
+      res.end(JSON.stringify({ error: err.message }));
     }
   },
 
@@ -218,23 +255,24 @@ export const postsController = {
       }
 
       const results = await postsService.searchPosts(q, page, limit);
-      const totalCount =
-        results.rows.length > 0 ? parseInt(results.rows[0].full_count, 10) : 0;
 
       res.statusCode = 200;
       res.setHeader("Content-Type", "application/json");
       res.end(
         JSON.stringify({
           posts: results.rows,
-          total: totalCount,
+          total: results.totalCount,
           page: page,
-          totalPages: Math.ceil(totalCount / limit),
+          totalPages: Math.ceil(results.totalCount / limit),
         }),
       );
     } catch (err: any) {
+      process.stderr.write(
+        `[searchPosts] ERROR: ${err.message}\nStack: ${err.stack}\n`,
+      );
       res.statusCode = 500;
       res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: "Search failed" }));
+      res.end(JSON.stringify({ error: err.message }));
     }
   },
 
@@ -256,23 +294,24 @@ export const postsController = {
       }
 
       const results = await postsService.filterByTag(tag, page, limit);
-      const totalCount =
-        results.rows.length > 0 ? parseInt(results.rows[0].full_count, 10) : 0;
 
       res.statusCode = 200;
       res.setHeader("Content-Type", "application/json");
       res.end(
         JSON.stringify({
           posts: results.rows,
-          total: totalCount,
+          total: results.totalCount,
           page: page,
-          totalPages: Math.ceil(totalCount / limit),
+          totalPages: Math.ceil(results.totalCount / limit),
         }),
       );
     } catch (err: any) {
+      process.stderr.write(
+        `[filterByTag] ERROR: ${err.message}\nStack: ${err.stack}\n`,
+      );
       res.statusCode = 500;
       res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: "Tag filter failed" }));
+      res.end(JSON.stringify({ error: err.message }));
     }
   },
 
@@ -298,23 +337,23 @@ export const postsController = {
         ? await postsService.filterBySubcategory(cat, sub, page, limit)
         : await postsService.filterByCategory(cat, page, limit);
 
-      const totalCount =
-        results.rows.length > 0 ? parseInt(results.rows[0].full_count, 10) : 0;
-
       res.statusCode = 200;
       res.setHeader("Content-Type", "application/json");
       res.end(
         JSON.stringify({
           posts: results.rows,
-          total: totalCount,
+          total: results.totalCount,
           page: page,
-          totalPages: Math.ceil(totalCount / limit),
+          totalPages: Math.ceil(results.totalCount / limit),
         }),
       );
     } catch (err: any) {
+      process.stderr.write(
+        `[filterByCategory] ERROR: ${err.message}\nStack: ${err.stack}\n`,
+      );
       res.statusCode = 500;
       res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: "Filter failed" }));
+      res.end(JSON.stringify({ error: err.message }));
     }
   },
 
@@ -335,84 +374,90 @@ export const postsController = {
           ? await postsService.sortPostsByTitle(order as any, page, limit)
           : await postsService.sortPostsByDate(order as any, page, limit);
 
-      const totalCount =
-        results.rows.length > 0 ? parseInt(results.rows[0].full_count, 10) : 0;
-
       res.statusCode = 200;
       res.setHeader("Content-Type", "application/json");
       res.end(
         JSON.stringify({
           posts: results.rows,
-          total: totalCount,
+          total: results.totalCount,
           page: page,
-          totalPages: Math.ceil(totalCount / limit),
+          totalPages: Math.ceil(results.totalCount / limit),
         }),
       );
     } catch (err: any) {
+      process.stderr.write(
+        `[sortPosts] ERROR: ${err.message}\nStack: ${err.stack}\n`,
+      );
       res.statusCode = 500;
       res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: "Sorting failed" }));
+      res.end(JSON.stringify({ error: err.message }));
     }
   },
 
   async createPost(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      res.statusCode = 401;
-      res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: "Unauthorized" }));
-      return;
-    }
-
-    let decoded: JWTPayload;
     try {
-      decoded = jwt.verify(
-        authHeader.split(" ")[1] as string,
-        ACCESS_TOKEN_SECRET as string,
-      ) as JWTPayload;
-    } catch {
-      res.statusCode = 401;
-      res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: "Invalid token" }));
-      return;
-    }
-
-    // --- MANUAL REDIS RATE LIMITING (Max 5 posts per hour per user) ---
-    try {
-      const createLimitKey = `ratelimit:createpost:${decoded.id}`;
-      const createsCount = await redisClient.incr(createLimitKey);
-
-      if (createsCount === 1) {
-        await redisClient.expire(createLimitKey, 3600); // 1 hour TTL
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        res.statusCode = 401;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ error: "Unauthorized" }));
+        return;
       }
 
-      if (createsCount > 5) {
-        res.statusCode = 429;
+      let decoded: JWTPayload;
+      try {
+        decoded = jwt.verify(
+          authHeader.split(" ")[1] as string,
+          ACCESS_TOKEN_SECRET as string,
+        ) as JWTPayload;
+      } catch (err: any) {
+        process.stderr.write(`[createPost] JWT Verify Error: ${err.message}\n`);
+        res.statusCode = 401;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ error: `Invalid token: ${err.message}` }));
+        return;
+      }
+
+      // --- MANUAL REDIS RATE LIMITING (Max 5 posts per hour per user) ---
+      try {
+        const createLimitKey = `ratelimit:createpost:${decoded.id}`;
+        const createsCount = await redisClient.incr(createLimitKey);
+
+        if (createsCount === 1) {
+          await redisClient.expire(createLimitKey, 3600); // 1 hour TTL
+        }
+
+        if (createsCount > 5) {
+          res.statusCode = 429;
+          res.setHeader("Content-Type", "application/json");
+          res.end(
+            JSON.stringify({
+              error:
+                "Creation limit exceeded. Maximum 5 posts per hour to prevent database abuse.",
+            }),
+          );
+          return;
+        }
+      } catch (err: any) {
+        process.stderr.write(
+          `[createPost] Redis Error: ${err.message}\nStack: ${err.stack}\n`,
+        );
+      }
+      // ------------------------------------------------------------------
+
+      let data: CreatePostDTO;
+      try {
+        data = (await json(req)) as CreatePostDTO;
+      } catch (err: any) {
+        process.stderr.write(`[createPost] JSON Parse Error: ${err.message}\n`);
+        res.statusCode = 400;
         res.setHeader("Content-Type", "application/json");
         res.end(
-          JSON.stringify({
-            error:
-              "Creation limit exceeded. Maximum 5 posts per hour to prevent database abuse.",
-          }),
+          JSON.stringify({ error: `Invalid JSON format: ${err.message}` }),
         );
         return;
       }
-    } catch (err: any) {
-      process.stderr.write(`[createPost] Redis Error: ${err.message}\n`);
-    }
-    // ------------------------------------------------------------------
 
-    let data: CreatePostDTO;
-    try {
-      data = (await json(req)) as CreatePostDTO;
-    } catch {
-      res.statusCode = 400;
-      res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: "Invalid JSON format." }));
-      return;
-    }
-
-    try {
       if (!data.title || data.title.length < 5 || data.title.length > 150) {
         res.statusCode = 400;
         res.end(JSON.stringify({ error: "Title must be 5-150 characters." }));
@@ -569,9 +614,11 @@ export const postsController = {
         JSON.stringify({ message: "Post created", post: result.rows[0] }),
       );
     } catch (err: any) {
-      console.error("❌ BASEMENT CRASH IN CREATE_POST:", err);
+      process.stderr.write(
+        `[createPost] CRITICAL ERROR: ${err.message}\nStack: ${err.stack}\n`,
+      );
       res.statusCode = 500;
-      res.end(JSON.stringify({ error: "Creation failed" }));
+      res.end(JSON.stringify({ error: err.message }));
     }
   },
 
@@ -580,28 +627,29 @@ export const postsController = {
     res: ServerResponse,
     postId: string,
   ): Promise<void> {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      res.statusCode = 401;
-      res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: "Unauthorized" }));
-      return;
-    }
-
-    let decoded: JWTPayload;
     try {
-      decoded = jwt.verify(
-        authHeader.split(" ")[1] as string,
-        ACCESS_TOKEN_SECRET as string,
-      ) as JWTPayload;
-    } catch {
-      res.statusCode = 401;
-      res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: "Invalid token" }));
-      return;
-    }
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        res.statusCode = 401;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ error: "Unauthorized" }));
+        return;
+      }
 
-    try {
+      let decoded: JWTPayload;
+      try {
+        decoded = jwt.verify(
+          authHeader.split(" ")[1] as string,
+          ACCESS_TOKEN_SECRET as string,
+        ) as JWTPayload;
+      } catch (err: any) {
+        process.stderr.write(`[updatePost] JWT Verify Error: ${err.message}\n`);
+        res.statusCode = 401;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ error: `Invalid token: ${err.message}` }));
+        return;
+      }
+
       const existing = await postsService.getPost(postId);
       if (existing.rows.length === 0) {
         res.statusCode = 404;
@@ -625,10 +673,13 @@ export const postsController = {
       let incomingData: UpdatePostDTO;
       try {
         incomingData = (await json(req)) as UpdatePostDTO;
-      } catch {
+      } catch (err: any) {
+        process.stderr.write(`[updatePost] JSON Parse Error: ${err.message}\n`);
         res.statusCode = 400;
         res.setHeader("Content-Type", "application/json");
-        res.end(JSON.stringify({ error: "Invalid JSON format." }));
+        res.end(
+          JSON.stringify({ error: `Invalid JSON format: ${err.message}` }),
+        );
         return;
       }
 
@@ -726,6 +777,7 @@ export const postsController = {
         "external_link",
         "github_link",
       ];
+
       const keys = Object.keys(incomingData).filter((k) => ALLOWED.includes(k));
       if (keys.length === 0) {
         res.statusCode = 400;
@@ -735,6 +787,7 @@ export const postsController = {
 
       const values = keys.map((k) => (incomingData as any)[k]);
       const setClause = keys.map((k, i) => `${k} = $${i + 1}`).join(", ");
+
       const result = await postsService.updatePost(setClause, [
         ...values,
         postId,
@@ -752,8 +805,11 @@ export const postsController = {
         JSON.stringify({ message: "Post updated", post: result.rows[0] }),
       );
     } catch (err: any) {
+      process.stderr.write(
+        `[updatePost] CRITICAL ERROR: ${err.message}\nStack: ${err.stack}\n`,
+      );
       res.statusCode = 500;
-      res.end(JSON.stringify({ error: "Update failed" }));
+      res.end(JSON.stringify({ error: err.message }));
     }
   },
 
@@ -762,28 +818,29 @@ export const postsController = {
     res: ServerResponse,
     postId: string,
   ): Promise<void> {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      res.statusCode = 401;
-      res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: "Unauthorized" }));
-      return;
-    }
-
-    let decoded: JWTPayload;
     try {
-      decoded = jwt.verify(
-        authHeader.split(" ")[1] as string,
-        ACCESS_TOKEN_SECRET as string,
-      ) as JWTPayload;
-    } catch {
-      res.statusCode = 401;
-      res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: "Invalid token" }));
-      return;
-    }
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        res.statusCode = 401;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ error: "Unauthorized" }));
+        return;
+      }
 
-    try {
+      let decoded: JWTPayload;
+      try {
+        decoded = jwt.verify(
+          authHeader.split(" ")[1] as string,
+          ACCESS_TOKEN_SECRET as string,
+        ) as JWTPayload;
+      } catch (err: any) {
+        process.stderr.write(`[deletePost] JWT Verify Error: ${err.message}\n`);
+        res.statusCode = 401;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ error: `Invalid token: ${err.message}` }));
+        return;
+      }
+
       const existing = await postsService.getPost(postId);
       if (existing.rows.length === 0) {
         res.statusCode = 404;
@@ -814,8 +871,11 @@ export const postsController = {
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify({ message: "Post deleted" }));
     } catch (err: any) {
+      process.stderr.write(
+        `[deletePost] CRITICAL ERROR: ${err.message}\nStack: ${err.stack}\n`,
+      );
       res.statusCode = 500;
-      res.end(JSON.stringify({ error: "Deletion failed" }));
+      res.end(JSON.stringify({ error: err.message }));
     }
   },
 
@@ -824,49 +884,54 @@ export const postsController = {
     res: ServerResponse,
     url: URL,
   ): Promise<void> {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      res.statusCode = 401;
-      res.end(JSON.stringify({ error: "Unauthorized" }));
-      return;
-    }
-
-    let decoded: JWTPayload;
     try {
-      decoded = jwt.verify(
-        authHeader.split(" ")[1] as string,
-        ACCESS_TOKEN_SECRET as string,
-      ) as JWTPayload;
-    } catch {
-      res.statusCode = 401;
-      res.end(JSON.stringify({ error: "Invalid token" }));
-      return;
-    }
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        res.statusCode = 401;
+        res.end(JSON.stringify({ error: "Unauthorized" }));
+        return;
+      }
 
-    try {
+      let decoded: JWTPayload;
+      try {
+        decoded = jwt.verify(
+          authHeader.split(" ")[1] as string,
+          ACCESS_TOKEN_SECRET as string,
+        ) as JWTPayload;
+      } catch (err: any) {
+        process.stderr.write(
+          `[getOwnPosts] JWT Verify Error: ${err.message}\n`,
+        );
+        res.statusCode = 401;
+        res.end(JSON.stringify({ error: `Invalid token: ${err.message}` }));
+        return;
+      }
+
       const page = parseInt(url.searchParams.get("page") || "1", 10);
       const limit = 12;
+
       const results = await postsService.getPostsByAuthor(
         decoded.id,
         page,
         limit,
       );
-      const totalCount =
-        results.rows.length > 0 ? parseInt(results.rows[0].full_count, 10) : 0;
 
       res.statusCode = 200;
       res.setHeader("Content-Type", "application/json");
       res.end(
         JSON.stringify({
           posts: results.rows,
-          total: totalCount,
+          total: results.totalCount,
           page: page,
-          totalPages: Math.ceil(totalCount / limit),
+          totalPages: Math.ceil(results.totalCount / limit),
         }),
       );
     } catch (err: any) {
+      process.stderr.write(
+        `[getOwnPosts] CRITICAL ERROR: ${err.message}\nStack: ${err.stack}\n`,
+      );
       res.statusCode = 500;
-      res.end(JSON.stringify({ error: "Failed to fetch your posts" }));
+      res.end(JSON.stringify({ error: err.message }));
     }
   },
 
@@ -883,25 +948,24 @@ export const postsController = {
         page,
         limit,
       );
-      const totalCount =
-        results.rows.length > 0 ? parseInt(results.rows[0].full_count, 10) : 0;
 
       res.statusCode = 200;
       res.setHeader("Content-Type", "application/json");
       res.end(
         JSON.stringify({
           posts: results.rows,
-          total: totalCount,
+          total: results.totalCount,
           page: page,
-          totalPages: Math.ceil(totalCount / limit),
+          totalPages: Math.ceil(results.totalCount / limit),
         }),
       );
     } catch (err: any) {
+      process.stderr.write(
+        `[getSuperAdminSeriousProjects] ERROR: ${err.message}\nStack: ${err.stack}\n`,
+      );
       res.statusCode = 500;
       res.setHeader("Content-Type", "application/json");
-      res.end(
-        JSON.stringify({ error: "Failed to fetch super admin projects" }),
-      );
+      res.end(JSON.stringify({ error: err.message }));
     }
   },
 
@@ -915,23 +979,24 @@ export const postsController = {
       const limit = 12;
 
       const results = await postsService.getSuperAdminDiary(page, limit);
-      const totalCount =
-        results.rows.length > 0 ? parseInt(results.rows[0].full_count, 10) : 0;
 
       res.statusCode = 200;
       res.setHeader("Content-Type", "application/json");
       res.end(
         JSON.stringify({
           posts: results.rows,
-          total: totalCount,
+          total: results.totalCount,
           page: page,
-          totalPages: Math.ceil(totalCount / limit),
+          totalPages: Math.ceil(results.totalCount / limit),
         }),
       );
     } catch (err: any) {
+      process.stderr.write(
+        `[getSuperAdminDiary] ERROR: ${err.message}\nStack: ${err.stack}\n`,
+      );
       res.statusCode = 500;
       res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: "Failed to fetch super admin diary" }));
+      res.end(JSON.stringify({ error: err.message }));
     }
   },
 };

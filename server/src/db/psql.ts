@@ -23,10 +23,6 @@ const poolConfig: pg.PoolConfig = {
 export const pool = new Pool(poolConfig);
 
 pool.on("error", (err: Error) => {
-  // Log pool state too so we can correlate the failure with leaked connections or
-  // a spike. totalCount = clients ever created (live + idle), idleCount = currently
-  // idle in the pool, waitingCount = requests waiting for a free client. If
-  // waitingCount keeps climbing each tick we have a leak.
   process.stderr.write(
     JSON.stringify({
       level: "FATAL",

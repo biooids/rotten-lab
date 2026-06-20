@@ -1,4 +1,4 @@
-// src/lib/features/auth/authSchema.ts
+//src/lib/features/auth/authSchema.ts
 import { z } from "zod";
 
 export const loginSchema = z.object({
@@ -34,8 +34,7 @@ export const updateSchema = z.object({
     .string()
     .min(3, "Username must be at least 3 characters.")
     .max(20, "Username cannot exceed 20 characters."),
-  // MODIFIED: Added optional string validation for BYOK API keys.
-  // We use .optional() allowing empty strings so users can clear/delete their keys if they want to.
+
   geminiApiKey: z.string().optional(),
   claudeApiKey: z.string().optional(),
 });

@@ -1,9 +1,6 @@
 //src/features/auth/auth.service.ts
 import { pool } from "../../db/psql.js";
 
-// ADDED: Fail-fast check for critical encryption key at the module level.
-// This runs immediately when this service is imported anywhere in the app,
-// guaranteeing it crashes before startup finishes if the key is missing.
 if (!process.env["DB_ENCRYPTION_KEY"]) {
   process.stderr.write(
     "[FATAL ERROR]: DB_ENCRYPTION_KEY is missing from environment variables. Halting startup to prevent data corruption.\n",
@@ -26,7 +23,6 @@ export const authService = {
     return await pool.query(sql, [username]);
   },
 
-  // MODIFIED: Updated to decrypt the API keys using pgp_sym_decrypt and bracket notation for process.env
   async findUserById(id: string) {
     const encryptionKey = process.env["DB_ENCRYPTION_KEY"] as string;
 
@@ -68,7 +64,6 @@ export const authService = {
     return await pool.query(sql, [username, id]);
   },
 
-  // ADDED: New function to encrypt and update API keys using pgp_sym_encrypt and bracket notation
   async updateApiKeys(
     id: string,
     geminiApiKey: string | null,

@@ -1,6 +1,8 @@
 //src/components/pages/home/HomeAbout.tsx
 "use client";
 import CornerFlourish from "@/components/shared/CornerFlourish";
+import { Button } from "@/components/ui/button";
+import Link from "next/dist/client/link";
 
 function HomeAbout() {
   return (
@@ -16,8 +18,21 @@ function HomeAbout() {
 
       <p className=" border-l-3 border-double pl-3">
         I just like doing teachign my self stuff and doing some random research.
-        And also creating things bruhhhhhh the beauty fo autism.
+        And also creating things bruhhhhhh the beauty fo autism. You can check
+        more about me by clicking bellow button.
       </p>
+      <Button
+        variant="outline"
+        size="sm"
+        className="rounded-none border-3 border-double w-fit"
+      >
+        <Link
+          href="/about"
+          className="w-full h-full flex items-center justify-center"
+        >
+          Read more
+        </Link>
+      </Button>
     </div>
   );
 }

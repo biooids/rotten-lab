@@ -1,4 +1,4 @@
-// src/server.ts
+//src/server.ts
 import http from "node:http";
 import { promisify } from "node:util";
 import { app } from "./app.js";
@@ -71,10 +71,10 @@ const startServer = async () => {
   try {
     console.log("🥹  Initializing Production Environment...");
 
-    verifyCloudinary();
-
+    await verifyCloudinary();
     await connectWithRetry();
     await connectRedis();
+
     startTokenCleanupWorker();
     zombieRecoveryService.resumeZombies().catch((err) => {
       console.error(`🫩  Failed to start Zombie Sweeper: ${err.message}`);

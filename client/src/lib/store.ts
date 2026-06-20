@@ -1,3 +1,4 @@
+//src/lib/store.ts
 import { configureStore } from "@reduxjs/toolkit";
 import { authApiSlice } from "./features/auth/authApiSlice";
 import { postsApiSlice } from "./features/posts/postsApiSlice";
@@ -21,7 +22,6 @@ export const store = configureStore({
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({
       serializableCheck: {
-        // 1. Ignore the exact mutation action types for both pending, fulfilled, and rejected
         ignoredActions: [
           "geminiApi/executeMutation/pending",
           "geminiApi/executeMutation/fulfilled",
@@ -30,13 +30,13 @@ export const store = configureStore({
           "claudeApi/executeMutation/fulfilled",
           "claudeApi/executeMutation/rejected",
         ],
-        // 2. Use RegExp to catch EVERYTHING deeply nested inside payloads and meta data
+
         ignoredActionPaths: [
           /^payload.*/,
           /^meta\.arg.*/,
           /^meta\.baseQueryMeta.*/,
         ],
-        // 3. Use RegExp to catch EVERYTHING deeply nested inside the mutation cache state
+
         ignoredPaths: [/^geminiApi\.mutations.*/, /^claudeApi\.mutations.*/],
       },
     }).concat(

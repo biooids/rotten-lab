@@ -13,7 +13,6 @@ export interface User {
   updated_at: string;
 }
 
-// Database representation of the new refresh_tokens table
 export interface RefreshTokenSession {
   id: string;
   user_id: string;
@@ -26,12 +25,11 @@ export interface RefreshTokenSession {
   created_at: string;
 }
 
-// This will now exclusively represent the short-lived access token
 export interface JWTPayload {
   id: string;
   username: string;
   role: UserRole;
-  token_use: "access"; // Strict identifier
+  token_use: "access";
   iat?: number;
   exp?: number;
 }

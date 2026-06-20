@@ -14,10 +14,6 @@ export default function QuickNavigationCard() {
   return (
     <div className=" border-3 border-double transition-all duration-300 p-3 flex flex-col gap-3 ">
       <div className="flex gap-1 items-center text-primary ">
-        <span className="p-1 border-double border-3">
-          {" "}
-          <LayoutGrid className="h-5 w-5" />
-        </span>
         <h3>Quick Navigation</h3>
       </div>
 

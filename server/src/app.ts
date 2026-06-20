@@ -23,7 +23,6 @@ export const app = async (
 ): Promise<void> => {
   const startTime = process.hrtime();
 
-  // --- STRICT CORS (Required for Secure Cookies) ---
   const origin = req.headers.origin || "";
   if (allowedOrigins.includes(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
@@ -78,15 +77,13 @@ export const app = async (
     )[0] || "unknown_ip";
   const redisKey = `ratelimit:global:${ip}`;
 
-  // REDIS BLOCK 1: Rate Limiter (Fail-Open & Development Bypass)
   if (process.env["NODE_ENV"] !== "development") {
     try {
       const currentCount = await redisClient.incr(redisKey);
       if (currentCount === 1) {
-        await redisClient.expire(redisKey, 60); // 1 minute rolling window
+        await redisClient.expire(redisKey, 60);
       }
 
-      // Bumped to 500 to accommodate heavy frontend polling during long background scans
       if (currentCount > 500) {
         res.statusCode = 429;
         res.setHeader("Content-Type", "application/json");
@@ -100,7 +97,6 @@ export const app = async (
     }
   }
 
-  // REDIS BLOCK 2: Maintenance Check (Fail-Open)
   let isMaintenance = "false";
   try {
     const maintenanceRes = await redisClient.get<string>("maintenance:status");
@@ -138,15 +134,13 @@ export const app = async (
 
     if (!isSuperAdmin) {
       let message = "The Lab is undergoing critical updates.";
-      // REDIS BLOCK 3: Fetching specific maintenance text securely
+
       try {
         const customMessage = await redisClient.get<string>(
           "maintenance:message",
         );
         if (customMessage) message = customMessage;
-      } catch (err) {
-        // Fallback silently if offline
-      }
+      } catch (err) {}
 
       res.statusCode = 503;
       res.setHeader("Content-Type", "application/json");
