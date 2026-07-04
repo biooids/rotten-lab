@@ -1,8 +1,7 @@
-//src/components/layouts/sidebar/sideBarCards/HomeCard.tsx
+// src/components/layouts/sidebar/sideBarCards/HomeCard.tsx
 "use client";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Home, MapPin, Clock, Calendar } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -19,7 +18,6 @@ export default function HomeCard() {
       )}
     >
       <div className="flex gap-1 items-center text-primary ">
-        {/* <Home className="h-5 w-5 " /> */}
         <h3>Home & About</h3>
       </div>
 
@@ -28,8 +26,12 @@ export default function HomeCard() {
         <p>In this home section you will find every thing about myself.</p>
       </div>
 
-      <Button variant="outline" className="border-3 border-double rounded-none">
-        Enter Room
+      <Button
+        asChild
+        variant="outline"
+        className="border-3 border-double rounded-none w-full pointer-events-none"
+      >
+        <span>Enter Room</span>
       </Button>
     </Link>
   );

@@ -18,7 +18,7 @@ export default function PrivacyPolicy() {
           Privacy Policy
         </h1>
         <div className="border-l-3 border-double pl-3">
-          <p className="text-sm font-bold">Last updated: May 2026</p>
+          <p className=" font-bold">Last updated: May 2026</p>
         </div>
       </div>
 
@@ -32,7 +32,7 @@ export default function PrivacyPolicy() {
         </h4>
 
         <div className="border-l-3 border-double pl-3">
-          <p className="text-xs">
+          <p className="text-sm">
             This is a personal portfolio and blog. I don't sell data, I don't
             run ads, and I don't use third-party trackers. This page exists
             because every website should have one.
@@ -51,10 +51,10 @@ export default function PrivacyPolicy() {
 
         <div className="border-l-3 border-double pl-3 flex flex-col gap-3">
           <div className="flex flex-col gap-1">
-            <span className="text-primary font-bold text-xs">
+            <span className="text-primary font-bold text-sm">
               Authentication Data
             </span>
-            <p className="text-xs">
+            <p className="text-sm">
               When you log in as the site owner, I store a hashed password and
               session token. This is purely for security. Only one account
               exists — mine.
@@ -62,8 +62,8 @@ export default function PrivacyPolicy() {
           </div>
 
           <div className="flex flex-col gap-1">
-            <span className="text-primary font-bold text-xs">Nothing Else</span>
-            <p className="text-xs">
+            <span className="text-primary font-bold text-sm">Nothing Else</span>
+            <p className="text-sm">
               No analytics. No cookies for visitors. No email collection. No
               contact forms storing data on my server. You visit, you leave.
               That's it.
@@ -82,7 +82,7 @@ export default function PrivacyPolicy() {
         </h4>
 
         <div className="border-l-3 border-double pl-3">
-          <p className="text-xs">
+          <p className="text-sm">
             I use Cloudinary for image hosting. When you view an image, your
             browser requests it directly from Cloudinary's servers. Their
             privacy policy applies to those requests.
@@ -100,7 +100,7 @@ export default function PrivacyPolicy() {
         </h4>
 
         <div className="border-l-3 border-double pl-3">
-          <p className="text-xs">
+          <p className="text-sm">
             If you have questions about this policy, reach out on{" "}
             <Link href="/contact" className="underline text-primary font-bold">
               my contact page
@@ -116,7 +116,7 @@ export default function PrivacyPolicy() {
         variant="outline"
         className="border-3 border-double rounded-none w-full sm:w-fit"
       >
-        <Link href="/">← Back Home</Link>
+        <Link href="/">Back Home</Link>
       </Button>
     </section>
   );

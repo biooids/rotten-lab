@@ -7,8 +7,13 @@ export const postsService = {
     try {
       const offset = (page - 1) * limit;
       const countSql = "SELECT COUNT(*) FROM posts;";
-      const dataSql =
-        "SELECT * FROM posts ORDER BY created_at DESC LIMIT $1 OFFSET $2;";
+      const dataSql = `
+        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
+        FROM posts p
+        JOIN users u ON p.author_id = u.id
+        ORDER BY p.created_at DESC 
+        LIMIT $1 OFFSET $2;
+      `;
 
       const [countRes, dataRes] = await Promise.all([
         pool.query(countSql),
@@ -29,7 +34,13 @@ export const postsService = {
 
   async getPost(postId: string) {
     try {
-      return await pool.query("SELECT * FROM posts WHERE id = $1", [postId]);
+      const sql = `
+        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
+        FROM posts p
+        JOIN users u ON p.author_id = u.id
+        WHERE p.id = $1;
+      `;
+      return await pool.query(sql, [postId]);
     } catch (err: any) {
       process.stderr.write(
         `[postsService.getPost] RAW DB ERROR: ${err.message}\nStack: ${err.stack}\n`,
@@ -61,7 +72,23 @@ export const postsService = {
         data.external_link || null,
         data.github_link || null,
       ];
-      return await pool.query(sql, values);
+
+      const insertResult = await pool.query(sql, values);
+
+      if (insertResult.rows.length === 0) {
+        throw new Error("Post creation failed, no rows returned.");
+      }
+
+      const newPostId = insertResult.rows[0].id;
+
+      const fullPostSql = `
+        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
+        FROM posts p
+        JOIN users u ON p.author_id = u.id
+        WHERE p.id = $1;
+      `;
+
+      return await pool.query(fullPostSql, [newPostId]);
     } catch (err: any) {
       process.stderr.write(
         `[postsService.createPost] RAW DB ERROR: ${err.message}\nStack: ${err.stack}\n`,
@@ -78,7 +105,22 @@ export const postsService = {
         WHERE id = $${params.length}
         RETURNING *;
       `;
-      return await pool.query(sql, params);
+      const updateResult = await pool.query(sql, params);
+
+      if (updateResult.rows.length === 0) {
+        return updateResult;
+      }
+
+      const updatedPostId = updateResult.rows[0].id;
+
+      const fullPostSql = `
+        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
+        FROM posts p
+        JOIN users u ON p.author_id = u.id
+        WHERE p.id = $1;
+      `;
+
+      return await pool.query(fullPostSql, [updatedPostId]);
     } catch (err: any) {
       process.stderr.write(
         `[postsService.updatePost] RAW DB ERROR: ${err.message}\nStack: ${err.stack}\n`,
@@ -99,44 +141,76 @@ export const postsService = {
   },
 
   async searchPosts(searchTerm: string, page: number = 1, limit: number = 12) {
+    const client = await pool.connect();
+
     try {
       const offset = (page - 1) * limit;
-      const countSql = `SELECT COUNT(*) FROM posts WHERE search_vector @@ websearch_to_tsquery('english', $1);`;
-      const dataSql = `
-        SELECT *, ts_rank(search_vector, websearch_to_tsquery('english', $1)) AS rank
-        FROM posts
+
+      await client.query("BEGIN;");
+
+      await client.query("SET LOCAL pg_trgm.word_similarity_threshold = 0.3;");
+
+      const countSql = `
+        SELECT COUNT(*) 
+        FROM posts 
         WHERE search_vector @@ websearch_to_tsquery('english', $1)
-        ORDER BY rank DESC, created_at DESC
+           OR $1 <% title;
+      `;
+
+      const dataSql = `
+        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
+        FROM posts p
+        JOIN users u ON p.author_id = u.id
+        WHERE p.search_vector @@ websearch_to_tsquery('english', $1)
+           OR $1 <% title
+        ORDER BY p.created_at DESC
         LIMIT $2 OFFSET $3;
       `;
 
       const [countRes, dataRes] = await Promise.all([
-        pool.query(countSql, [searchTerm]),
-        pool.query(dataSql, [searchTerm, limit, offset]),
+        client.query(countSql, [searchTerm]),
+        client.query(dataSql, [searchTerm, limit, offset]),
       ]);
+
+      await client.query("COMMIT;");
 
       return {
         rows: dataRes.rows,
         totalCount: parseInt(countRes.rows[0]?.count || "0", 10),
       };
     } catch (err: any) {
+      await client.query("ROLLBACK;");
+
       process.stderr.write(
         `[postsService.searchPosts] RAW DB ERROR: ${err.message}\nStack: ${err.stack}\n`,
       );
       throw err;
+    } finally {
+      client.release();
     }
   },
-
-  async filterByTag(tag: string, page: number = 1, limit: number = 12) {
+  async filterByTag(tagsString: string, page: number = 1, limit: number = 12) {
     try {
       const offset = (page - 1) * limit;
-      const countSql = "SELECT COUNT(*) FROM posts WHERE $1 = ANY(tags);";
-      const dataSql =
-        "SELECT * FROM posts WHERE $1 = ANY(tags) ORDER BY created_at DESC LIMIT $2 OFFSET $3;";
+
+      const tagsArray = tagsString
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
+
+      const countSql = "SELECT COUNT(*) FROM posts WHERE tags && $1::text[];";
+      const dataSql = `
+        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
+        FROM posts p
+        JOIN users u ON p.author_id = u.id
+        WHERE p.tags && $1::text[] 
+        ORDER BY p.created_at DESC 
+        LIMIT $2 OFFSET $3;
+      `;
 
       const [countRes, dataRes] = await Promise.all([
-        pool.query(countSql, [tag]),
-        pool.query(dataSql, [tag, limit, offset]),
+        pool.query(countSql, [tagsArray]),
+        pool.query(dataSql, [tagsArray, limit, offset]),
       ]);
 
       return {
@@ -150,7 +224,6 @@ export const postsService = {
       throw err;
     }
   },
-
   async filterByCategory(
     category: string,
     page: number = 1,
@@ -159,8 +232,14 @@ export const postsService = {
     try {
       const offset = (page - 1) * limit;
       const countSql = "SELECT COUNT(*) FROM posts WHERE category = $1;";
-      const dataSql =
-        "SELECT * FROM posts WHERE category = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3;";
+      const dataSql = `
+        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
+        FROM posts p
+        JOIN users u ON p.author_id = u.id
+        WHERE p.category = $1 
+        ORDER BY p.created_at DESC 
+        LIMIT $2 OFFSET $3;
+      `;
 
       const [countRes, dataRes] = await Promise.all([
         pool.query(countSql, [category]),
@@ -189,8 +268,14 @@ export const postsService = {
       const offset = (page - 1) * limit;
       const countSql =
         "SELECT COUNT(*) FROM posts WHERE category = $1 AND subcategory = $2;";
-      const dataSql =
-        "SELECT * FROM posts WHERE category = $1 AND subcategory = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4;";
+      const dataSql = `
+        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
+        FROM posts p
+        JOIN users u ON p.author_id = u.id
+        WHERE p.category = $1 AND p.subcategory = $2 
+        ORDER BY p.created_at DESC 
+        LIMIT $3 OFFSET $4;
+      `;
 
       const [countRes, dataRes] = await Promise.all([
         pool.query(countSql, [category, subcategory]),
@@ -217,7 +302,13 @@ export const postsService = {
     try {
       const offset = (page - 1) * limit;
       const countSql = "SELECT COUNT(*) FROM posts;";
-      const dataSql = `SELECT * FROM posts ORDER BY created_at ${order} LIMIT $1 OFFSET $2;`;
+      const dataSql = `
+        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
+        FROM posts p
+        JOIN users u ON p.author_id = u.id
+        ORDER BY p.created_at ${order} 
+        LIMIT $1 OFFSET $2;
+      `;
 
       const [countRes, dataRes] = await Promise.all([
         pool.query(countSql),
@@ -244,7 +335,13 @@ export const postsService = {
     try {
       const offset = (page - 1) * limit;
       const countSql = "SELECT COUNT(*) FROM posts;";
-      const dataSql = `SELECT * FROM posts ORDER BY title ${order} LIMIT $1 OFFSET $2;`;
+      const dataSql = `
+        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
+        FROM posts p
+        JOIN users u ON p.author_id = u.id
+        ORDER BY p.title ${order} 
+        LIMIT $1 OFFSET $2;
+      `;
 
       const [countRes, dataRes] = await Promise.all([
         pool.query(countSql),
@@ -271,8 +368,14 @@ export const postsService = {
     try {
       const offset = (page - 1) * limit;
       const countSql = "SELECT COUNT(*) FROM posts WHERE author_id = $1;";
-      const dataSql =
-        "SELECT * FROM posts WHERE author_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3;";
+      const dataSql = `
+        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
+        FROM posts p
+        JOIN users u ON p.author_id = u.id
+        WHERE p.author_id = $1 
+        ORDER BY p.created_at DESC 
+        LIMIT $2 OFFSET $3;
+      `;
 
       const [countRes, dataRes] = await Promise.all([
         pool.query(countSql, [authorId]),
@@ -300,7 +403,8 @@ export const postsService = {
         WHERE p.category = 'projects' AND p.subcategory = 'serious' AND u.role = 'super_admin';
       `;
       const dataSql = `
-        SELECT p.* FROM posts p
+        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
+        FROM posts p
         JOIN users u ON p.author_id = u.id
         WHERE p.category = 'projects' AND p.subcategory = 'serious' AND u.role = 'super_admin'
         ORDER BY p.created_at DESC
@@ -333,7 +437,8 @@ export const postsService = {
         WHERE p.category = 'diary' AND u.role = 'super_admin';
       `;
       const dataSql = `
-        SELECT p.* FROM posts p
+        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
+        FROM posts p
         JOIN users u ON p.author_id = u.id
         WHERE p.category = 'diary' AND u.role = 'super_admin'
         ORDER BY p.created_at DESC
@@ -352,6 +457,30 @@ export const postsService = {
     } catch (err: any) {
       process.stderr.write(
         `[postsService.getSuperAdminDiary] RAW DB ERROR: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      throw err;
+    }
+  },
+
+  async getAllUniqueTags() {
+    try {
+      const sql = `
+        SELECT DISTINCT unnest(tags) AS tag 
+        FROM posts 
+        ORDER BY tag ASC;
+      `;
+      const result = await pool.query(sql);
+
+      const tagsList: string[] = [];
+
+      for (const row of result.rows) {
+        tagsList.push(row.tag);
+      }
+
+      return tagsList;
+    } catch (err: any) {
+      process.stderr.write(
+        `[postsService.getAllUniqueTags] RAW DB ERROR: ${err.message}\nStack: ${err.stack}\n`,
       );
       throw err;
     }

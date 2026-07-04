@@ -52,7 +52,7 @@ export default function SystemLogs() {
       <CornerFlourish className="-bottom-1 -right-1 rotate-180" />
 
       <div className="flex flex-col md:flex-row gap-3 items-start md:items-center justify-between">
-        <div className="flex gap-2 items-center text-primary">
+        <div className="flex  items-center text-primary border-b-3 border-double pb-3 w-full">
           <h4 className="font-bold text-sm  ">Logs :</h4>
         </div>
 

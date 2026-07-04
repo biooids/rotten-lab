@@ -54,77 +54,43 @@ export default function AboutPage() {
           About Me
         </h1>
         <div className="border-l-3 border-double pl-3">
-          <p className="text-sm font-bold">
-            This is not a polished story. It's my actual life—rejections,
-            obsessions, and all.
-          </p>
+          <p className="font-bold ">This is my actual life story.</p>
         </div>
       </div>
 
-      {/* The Raw Story */}
+      {/* story */}
       <div className="relative border-3 border-double p-3 flex flex-col gap-3">
         <CornerFlourish className="-top-1 -left-1" />
         <CornerFlourish className="-bottom-1 -right-1 rotate-180" />
 
         <h4 className="bg-primary text-primary-foreground font-bold p-1 w-fit">
-          The Journey (Unfiltered)
+          The Journey
         </h4>
 
         <div className="border-l-3 border-double pl-3 flex flex-col gap-6">
           {timeline.map((entry, i) => (
             <div key={i} className="flex flex-col gap-1">
-              <span className="text-primary font-bold text-xs">
-                {entry.date}
-              </span>
-              <span className="text-sm font-bold">{entry.label}</span>
-              <p className="text-xs">{entry.detail}</p>
+              <span className="text-primary font-bold ">{entry.date}</span>
+              <span className="font-bold">{entry.label}</span>
+              <p className="text-sm ">{entry.detail}</p>
             </div>
           ))}
         </div>
-      </div>
 
-      {/* What I Actually Believe */}
-      <div className="relative border-3 border-double p-3 flex flex-col gap-3">
-        <CornerFlourish className="-top-1 -left-1" />
-        <CornerFlourish className="-bottom-1 -right-1 rotate-180" />
-
-        <h4 className="bg-primary text-primary-foreground font-bold p-1 w-fit">
-          What I'm Chasing
-        </h4>
-
-        <div className="border-l-3 border-double pl-3 flex flex-col gap-3">
-          <p className="text-sm font-bold">
-            I want to be a researcher in bio+computer integrated systems. Sounds
-            sci-fi. I'm down bad for that.
-          </p>
-          <p className="text-xs">
-            Right now, I'm a full-fledged web developer by necessity. MERN stack
-            + PostgreSQL + Next.js. I'm learning math on the way. A job means
-            financial freedom for my research obsession. That's the real plan.
-          </p>
+        <div className="border-l-3 border-double pl-3 flex flex-col gap-1">
+          <span className=" font-bold text-primary">
+            Plane story (Unfiltered)
+          </span>
+          <span className="font-bold ">
+            This is the whole story about my life from childhood to now
+          </span>
         </div>
       </div>
 
-      {/* Projects Born from This Chaos (Live Database Component) */}
+      {/* Diary */}
+      <AboutDiary />
+      {/* Projects*/}
       <HomeProjects />
-
-      {/* Bottom - The Vulnerability */}
-      <div className="relative border-3 border-double p-3 flex flex-col gap-3">
-        <CornerFlourish className="-top-1 -left-1" />
-        <CornerFlourish className="-bottom-1 -right-1 rotate-180" />
-
-        <h4 className="bg-primary text-primary-foreground font-bold p-1 w-fit">
-          The Truth
-        </h4>
-
-        <div className="border-l-3 border-double pl-3">
-          <p className="text-xs">
-            I found a vulnerability on my country's financial aid website. They
-            fixed it without giving me anything. They give aid to people who
-            contributed nothing. They didn't fix it well. I'm still here.
-          </p>
-        </div>
-      </div>
 
       {/* CTA */}
       <div className="flex gap-3 flex-wrap">
@@ -142,11 +108,33 @@ export default function AboutPage() {
         >
           <Link href="/computer">See My Work</Link>
         </Button>
+
+        <Button
+          asChild
+          variant="outline"
+          className="border-3 border-double rounded-none"
+        >
+          <Link href="/contact">Download CV</Link>
+        </Button>
       </div>
 
-      {/* Complete Paginated Diary Component */}
-      <div className="mt-6 border-t-3 border-double pt-6">
-        <AboutDiary />
+      {/*what am chasing now and future plans */}
+      <div className="relative border-3 border-double p-3 flex flex-col gap-3">
+        <CornerFlourish className="-top-1 -left-1" />
+        <CornerFlourish className="-bottom-1 -right-1 rotate-180" />
+
+        <h4 className="bg-primary text-primary-foreground font-bold p-1 w-fit">
+          The Truth
+        </h4>
+
+        <div className="border-l-3 border-double pl-3 flex flex-col gap-1">
+          <span className=" font-bold text-primary">
+            What am i chasing now and future plans :
+          </span>
+          <p className="text-sm">
+            I am chasing a career in software engineering, but I am also
+          </p>
+        </div>
       </div>
     </section>
   );

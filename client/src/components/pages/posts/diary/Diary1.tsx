@@ -1,33 +1,25 @@
-// src/components/pages/posts/projects/Projects.tsx
+// src/components/pages/posts/diary/Diary.tsx
 "use client";
 
-import React, { useMemo, useCallback } from "react";
+import React, { useMemo } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import { cn } from "@/lib/utils";
 import PostCard from "../PostCard";
 import CornerFlourish from "@/components/shared/CornerFlourish";
 import FilterSection from "../FilterSection";
-import { Star, Shapes } from "lucide-react";
+import { Book } from "lucide-react";
 import {
   useFilterByCategoryQuery,
   useSearchPostsQuery,
   useFilterByTagQuery,
   useSortPostsQuery,
-  useGetAllTagsQuery,
 } from "@/lib/features/posts/postsApiSlice";
 
 const CardSkeleton = () => (
-  <div className="relative border-3 border-double bg-card flex flex-col gap-3 p-3 justify-between h-full animate-pulse">
-    <CornerFlourish className="-top-1 -left-1" />
-    <CornerFlourish className="-top-1 -right-1 rotate-90" />
-    <CornerFlourish className="-bottom-1 -left-1 -rotate-90" />
-    <CornerFlourish className="-bottom-1 -right-1 rotate-180" />
-
+  <div className="border-3 border-double bg-card flex flex-col gap-3 p-3 justify-between animate-pulse">
     <div className="flex flex-col gap-3">
       <div className="relative aspect-video border-3 border-double bg-background flex items-center justify-center">
         <span className="text-xs font-bold">Loading...</span>
       </div>
-      <div className="h-5 w-16 bg-primary/20" />
       <div className="flex gap-1">
         <div className="w-10 h-10 border-3 border-double bg-background" />
         <div className="flex flex-col gap-1 justify-center">
@@ -53,90 +45,57 @@ const CardSkeleton = () => (
   </div>
 );
 
-const tabs = [
-  { key: "serious", label: "Serious Projects", icon: Star },
-  { key: "random", label: "Random Projects", icon: Shapes },
-] as const;
+const EmptyState = () => (
+  <div className="p-3 border-3 border-double text-center flex flex-col gap-3 items-center">
+    <p className="text-sm font-bold ">No posts found matching your search.</p>
+    <p className="text-xs font-bold ">
+      Try different keywords or clear the filters.
+    </p>
+  </div>
+);
 
-type TabKey = (typeof tabs)[number]["key"];
-
-export default function Projects() {
+export default function Diary() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
   // --- READ EXPLICITLY FROM URL ---
-  const activeTab = (searchParams.get("tab") as TabKey) || "serious";
   const page = parseInt(searchParams.get("page") || "1", 10);
   const searchQuery = searchParams.get("q") || "";
-
-  // MULTI-TAG FIX: Read as string, parse as array
-  const activeTagsString = searchParams.get("tag") || "";
-  const selectedTags = useMemo(
-    () => (activeTagsString ? activeTagsString.split(",") : []),
-    [activeTagsString],
-  );
-
+  const activeTag = searchParams.get("tag") || "";
+  const selectedTags = activeTag ? [activeTag] : [];
   const sortBy = (searchParams.get("sortBy") as "date" | "title") || "date";
   const sortOrder = (searchParams.get("sortOrder") as "ASC" | "DESC") || "DESC";
 
   // --- EXPLICIT URL UPDATER ---
-  const updateURL = useCallback(
-    (key: string, value: string | null, resetPage: boolean = true) => {
-      const params = new URLSearchParams(searchParams.toString());
-      if (value) params.set(key, value);
-      else params.delete(key);
+  const updateURL = (
+    key: string,
+    value: string | null,
+    resetPage: boolean = true,
+  ) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (value) params.set(key, value);
+    else params.delete(key);
 
-      if (resetPage) params.set("page", "1");
-      if (key === "q" && value) params.delete("tag");
-      if (key === "tag" && value) params.delete("q");
+    if (resetPage) params.set("page", "1");
 
-      router.push(`${pathname}?${params.toString()}`, { scroll: false });
-    },
-    [searchParams, pathname, router],
-  );
+    if (key === "q" && value) params.delete("tag");
+    if (key === "tag" && value) params.delete("q");
+
+    router.push(`${pathname}?${params.toString()}`, { scroll: false });
+  };
 
   // --- HANDLERS ---
-  const toggleTag = useCallback(
-    (tag: string) => {
-      let newTags = [...selectedTags];
-      if (newTags.includes(tag)) {
-        newTags = newTags.filter((t) => t !== tag);
-      } else {
-        newTags.push(tag);
-      }
-      updateURL("tag", newTags.length > 0 ? newTags.join(",") : null);
-    },
-    [selectedTags, updateURL],
-  );
-
-  const setSearchQuery = useCallback(
-    (val: string) => updateURL("q", val),
-    [updateURL],
-  );
-
-  const setSortBy = useCallback(
-    (val: "date" | "title") => updateURL("sortBy", val, false),
-    [updateURL],
-  );
-
-  const setSortOrder = useCallback(
-    (val: "ASC" | "DESC") => updateURL("sortOrder", val, false),
-    [updateURL],
-  );
-
-  const handleTabChange = useCallback(
-    (tab: TabKey) => {
-      const params = new URLSearchParams(); // Reset all filters when changing tabs
-      params.set("tab", tab);
-      router.push(`${pathname}?${params.toString()}`, { scroll: false });
-    },
-    [pathname, router],
-  );
+  const toggleTag = (tag: string) =>
+    updateURL("tag", activeTag === tag ? null : tag);
+  const setSearchQuery = (val: string) => updateURL("q", val);
+  const setSortBy = (val: "date" | "title") => updateURL("sortBy", val, false);
+  const setSortOrder = (val: "ASC" | "DESC") =>
+    updateURL("sortOrder", val, false);
 
   // --- DYNAMIC QUERY RESOLUTION ---
   const isSearch = Boolean(searchQuery);
-  const isTag = selectedTags.length > 0;
+  const isTag = Boolean(activeTag);
   const isSort = sortBy !== "date" || sortOrder !== "DESC";
 
   const {
@@ -144,7 +103,7 @@ export default function Projects() {
     isLoading: loadingCat,
     isFetching: fetchingCat,
   } = useFilterByCategoryQuery(
-    { cat: "projects", sub: activeTab, page },
+    { cat: "diary", page },
     { skip: isSearch || isTag || isSort },
   );
 
@@ -158,7 +117,7 @@ export default function Projects() {
     data: tagData,
     isLoading: loadingTag,
     isFetching: fetchingTag,
-  } = useFilterByTagQuery({ tag: activeTagsString, page }, { skip: !isTag });
+  } = useFilterByTagQuery({ tag: activeTag, page }, { skip: !isTag });
 
   const {
     data: sortData,
@@ -168,8 +127,6 @@ export default function Projects() {
     { by: sortBy, order: sortOrder, page },
     { skip: !isSort || isSearch || isTag },
   );
-
-  const { data: globalTagsData } = useGetAllTagsQuery();
 
   let activeData = catData;
   let isPageLoading = loadingCat || fetchingCat;
@@ -187,7 +144,11 @@ export default function Projects() {
 
   const filteredPosts = activeData?.posts || [];
 
-  const allAvailableTags = globalTagsData?.tags || [];
+  const allAvailableTags = useMemo(() => {
+    const tags = filteredPosts.flatMap((post) => post.tags);
+    return Array.from(new Set(tags)).sort();
+  }, [filteredPosts]);
+
   return (
     <section className="p-3 lg:p-6 min-h-screen flex flex-col gap-6 bg-background text-foreground">
       <header className="relative border-3 border-double p-3 flex flex-col gap-3">
@@ -197,60 +158,14 @@ export default function Projects() {
         <CornerFlourish className="-bottom-1 -right-1 rotate-180" />
 
         <div className=" text-primary">
-          <h4 className="bg-primary text-primary-foreground font-bold p-1 w-fit uppercase">
-            Projects :
+          <h4 className="bg-primary text-primary-foreground font-bold p-1 w-fit ">
+            Diary :
           </h4>
         </div>
-        <p className="border-l-3 border-double pl-3 text-xs font-bold">
-          What I built. Some serious, some from the tutorial trenches.
+        <p className="border-l-3 border-double pl-3 font-bold text-xs">
+          Life events, stories, and personal thoughts.
         </p>
       </header>
-
-      <div className="flex gap-3">
-        {tabs.map((tab) => {
-          const isActive = activeTab === tab.key;
-          const count = isActive && activeData ? activeData.total : "—";
-
-          return (
-            <button
-              key={tab.key}
-              onClick={() => handleTabChange(tab.key)}
-              className={cn(
-                "relative border-3 border-double p-3 flex items-center gap-2 transition-all flex-1",
-                isActive
-                  ? "bg-primary text-primary-foreground"
-                  : "hover:bg-card hover:text-primary",
-              )}
-            >
-              <CornerFlourish
-                className={cn(
-                  "-top-1 -left-1",
-                  isActive ? "text-primary-foreground" : "text-primary",
-                )}
-              />
-              <CornerFlourish
-                className={cn(
-                  "-bottom-1 -right-1 rotate-180",
-                  isActive ? "text-primary-foreground" : "text-primary",
-                )}
-              />
-
-              <tab.icon className="h-4 w-4" />
-              <span className="text-sm font-bold uppercase">{tab.label}</span>
-              <span
-                className={cn(
-                  "text-xs font-bold border-3 border-double px-2 py-0.5 ml-auto",
-                  isActive
-                    ? "border-primary-foreground text-primary-foreground"
-                    : "border-primary text-primary",
-                )}
-              >
-                {count}
-              </span>
-            </button>
-          );
-        })}
-      </div>
 
       <FilterSection
         searchQuery={searchQuery}
@@ -262,16 +177,14 @@ export default function Projects() {
         setSortBy={setSortBy}
         sortOrder={sortOrder}
         setSortOrder={setSortOrder}
-        clearAllFilters={() =>
-          router.push(`${pathname}?tab=${activeTab}`, { scroll: false })
-        }
+        clearAllFilters={() => router.push(pathname, { scroll: false })}
       />
 
       {!isPageLoading && (
         <div className="flex justify-between items-center">
-          <span className="text-xs font-bold border-3 border-double px-2 py-1 uppercase">
+          <span className="text-xs font-bold border-3 border-double px-2 py-1 ">
             {filteredPosts.length}{" "}
-            {filteredPosts.length === 1 ? "project" : "projects"}
+            {filteredPosts.length === 1 ? "post" : "posts"}
           </span>
         </div>
       )}
@@ -282,16 +195,8 @@ export default function Projects() {
           : filteredPosts.map((post) => <PostCard key={post.id} post={post} />)}
       </div>
 
-      {!isPageLoading && filteredPosts.length === 0 && (
-        <div className="p-3 border-3 border-double text-center flex flex-col gap-3 items-center font-bold">
-          <p className="text-sm">No projects found.</p>
-          <p className="text-xs">
-            Try different keywords or switch to the other tab.
-          </p>
-        </div>
-      )}
+      {!isPageLoading && filteredPosts.length === 0 && <EmptyState />}
 
-      {/* --- PAGINATION CONTROLS --- */}
       {activeData && activeData.totalPages > 1 && (
         <div className="flex items-center justify-between border-3 border-double p-3 mt-4">
           <p className="text-xs font-bold opacity-70">

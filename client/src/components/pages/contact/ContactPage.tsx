@@ -103,7 +103,7 @@ export default function ContactPage() {
           Contact Me
         </h1>
         <div className="border-l-3 border-double pl-3">
-          <p className="text-sm font-bold">
+          <p className=" font-bold">
             No contact forms. No automated replies. Just reach out directly.
           </p>
         </div>
@@ -128,14 +128,14 @@ export default function ContactPage() {
               {/* Info */}
               <div className="flex flex-col gap-1">
                 <div className="flex items-center gap-1 flex-wrap">
-                  <h3 className="font-bold text-primary text-sm">
+                  <h3 className="font-bold text-primary text-sm ">
                     {link.label} :
                   </h3>
-                  <span className="text-xs font-bold border-3 border-double bg-card">
+                  <span className=" font-bold border-3 border-double bg-card text-sm">
                     {link.value}
                   </span>
                 </div>
-                <p className="text-xs">{link.description}</p>
+                <p className="text-sm">{link.description}</p>
               </div>
             </div>
 
@@ -182,47 +182,30 @@ export default function ContactPage() {
         <CornerFlourish className="-bottom-1 -right-1 rotate-180" />
 
         <div className="flex gap-1 items-center text-primary">
-          <h4 className="bg-primary text-primary-foreground font-bold p-1 w-fit text-sm">
+          <h4 className="bg-primary  text-primary-foreground font-bold p-1 w-fit ">
             What to Expect
           </h4>
         </div>
 
         <div className="border-l-3 border-double pl-3 flex flex-col gap-3">
           <div className="flex flex-col gap-1">
-            <span className="text-primary font-bold text-xs">Discord</span>
-            <p className="text-xs">
+            <span className="text-primary font-bold text-sm ">Discord</span>
+            <p className="text-sm">
               Usually same day. I practically live there.
             </p>
           </div>
           <div className="flex flex-col gap-1">
-            <span className="text-primary font-bold text-xs">Email</span>
-            <p className="text-xs">24-48 hours. I check it twice daily.</p>
+            <span className="text-primary font-bold text-sm ">Email</span>
+            <p className="text-sm">24-48 hours. I check it twice daily.</p>
           </div>
           <div className="flex flex-col gap-1">
-            <span className="text-primary font-bold text-xs">Social Media</span>
-            <p className="text-xs">
+            <span className="text-primary font-bold text-sm ">
+              Social Media
+            </span>
+            <p className="text-sm">
               Whenever I'm not coding. Don't expect instant replies.
             </p>
           </div>
-        </div>
-      </div>
-
-      {/* Recruiter / Collaboration Note */}
-      <div className="relative border-3 border-double p-3 flex flex-col gap-3">
-        <CornerFlourish className="-top-1 -left-1" />
-        <CornerFlourish className="-bottom-1 -right-1 rotate-180" />
-
-        <h4 className="bg-primary text-primary-foreground font-bold p-1 w-fit text-sm">
-          For Recruiters & Collaborators
-        </h4>
-
-        <div className="border-l-3 border-double pl-3">
-          <p className="text-xs">
-            I'm actively looking for web development roles (MERN + Next.js +
-            PostgreSQL). Also open to research collaborations in bioinformatics
-            and computational biology. Email me with "Opportunity" in the
-            subject line for faster response.
-          </p>
         </div>
       </div>
 

@@ -1,7 +1,8 @@
-//src/components/pages/posts/MyPosts/MyPosts.tsx
+// src/components/pages/posts/MyPosts/MyPosts.tsx
 "use client";
 
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useMemo, useCallback } from "react";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import PostCard from "../PostCard";
 import CornerFlourish from "@/components/shared/CornerFlourish";
 import FilterSection from "../FilterSection";
@@ -12,7 +13,9 @@ import {
   useFilterByTagQuery,
   useFilterByCategoryQuery,
   useSortPostsQuery,
+  useGetAllTagsQuery,
 } from "@/lib/features/posts/postsApiSlice";
+import AuthGuard from "@/components/shared/AuthGuard";
 
 const CardSkeleton = () => (
   <div className="border-3 border-double bg-card flex flex-col gap-3 p-3 justify-between animate-pulse">
@@ -39,23 +42,93 @@ const EmptyState = () => (
   </div>
 );
 
-export default function MyPosts() {
-  const [page, setPage] = useState(1);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState("");
-  const [sortBy, setSortBy] = useState<"date" | "title">("date");
-  const [sortOrder, setSortOrder] = useState<"ASC" | "DESC">("DESC");
+// We extract all the hook logic into a child component so it ONLY mounts and
+// fetches data IF the AuthGuard allows it to render.
+function MyPostsContent() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
 
-  useEffect(() => {
-    setPage(1);
-  }, [searchQuery, selectedTags, selectedCategory, sortBy, sortOrder]);
+  // --- READ EXPLICITLY FROM URL ---
+  const page = parseInt(searchParams.get("page") || "1", 10);
+  const searchQuery = searchParams.get("q") || "";
+
+  // MULTI-TAG FIX: Read as string, parse as array
+  const activeTagsString = searchParams.get("tag") || "";
+  const selectedTags = useMemo(
+    () => (activeTagsString ? activeTagsString.split(",") : []),
+    [activeTagsString],
+  );
+
+  const activeCategory = searchParams.get("category") || "";
+  const sortBy = (searchParams.get("sortBy") as "date" | "title") || "date";
+  const sortOrder = (searchParams.get("sortOrder") as "ASC" | "DESC") || "DESC";
+
+  // --- EXPLICIT URL UPDATER ---
+  const updateURL = useCallback(
+    (key: string, value: string | null, resetPage: boolean = true) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (value) params.set(key, value);
+      else params.delete(key);
+
+      if (resetPage) params.set("page", "1");
+
+      if (key === "q" && value) {
+        params.delete("tag");
+        params.delete("category");
+      }
+      if (key === "tag" && value) {
+        params.delete("q");
+        params.delete("category");
+      }
+      if (key === "category" && value) {
+        params.delete("q");
+        params.delete("tag");
+      }
+
+      router.push(`${pathname}?${params.toString()}`, { scroll: false });
+    },
+    [searchParams, pathname, router],
+  );
+
+  // --- HANDLERS ---
+  const toggleTag = useCallback(
+    (tag: string) => {
+      let newTags = [...selectedTags];
+      if (newTags.includes(tag)) {
+        newTags = newTags.filter((t) => t !== tag);
+      } else {
+        newTags.push(tag);
+      }
+      updateURL("tag", newTags.length > 0 ? newTags.join(",") : null);
+    },
+    [selectedTags, updateURL],
+  );
+
+  const setSearchQuery = useCallback(
+    (val: string) => updateURL("q", val),
+    [updateURL],
+  );
+
+  const setSelectedCategory = useCallback(
+    (val: string) => updateURL("category", val),
+    [updateURL],
+  );
+
+  const setSortBy = useCallback(
+    (val: "date" | "title") => updateURL("sortBy", val, false),
+    [updateURL],
+  );
+
+  const setSortOrder = useCallback(
+    (val: "ASC" | "DESC") => updateURL("sortOrder", val, false),
+    [updateURL],
+  );
 
   // --- DYNAMIC QUERY RESOLUTION ---
   const isSearch = Boolean(searchQuery);
-  const activeTag = selectedTags[0] || "";
-  const isTag = Boolean(activeTag);
-  const isCategory = Boolean(selectedCategory);
+  const isTag = selectedTags.length > 0;
+  const isCategory = Boolean(activeCategory);
   const isSort = sortBy !== "date" || sortOrder !== "DESC";
 
   const {
@@ -79,7 +152,7 @@ export default function MyPosts() {
     isLoading: loadingTag,
     isFetching: fetchingTag,
     isError: errTag,
-  } = useFilterByTagQuery({ tag: activeTag, page }, { skip: !isTag });
+  } = useFilterByTagQuery({ tag: activeTagsString, page }, { skip: !isTag });
 
   const {
     data: categoryData,
@@ -87,7 +160,7 @@ export default function MyPosts() {
     isFetching: fetchingCategory,
     isError: errCat,
   } = useFilterByCategoryQuery(
-    { cat: selectedCategory, page },
+    { cat: activeCategory, page },
     { skip: !isCategory },
   );
 
@@ -100,7 +173,7 @@ export default function MyPosts() {
     { by: sortBy, order: sortOrder, page },
     { skip: !isSort || isSearch || isTag || isCategory },
   );
-
+  const { data: globalTagsData } = useGetAllTagsQuery();
   let activeData = myData;
   let isPageLoading = loadingMy || fetchingMy;
   let hasError = errMy;
@@ -125,18 +198,10 @@ export default function MyPosts() {
 
   const filteredPosts = activeData?.posts || [];
 
-  const allAvailableTags = useMemo(() => {
-    const tags = filteredPosts.flatMap((post) => post.tags);
-    return Array.from(new Set(tags)).sort();
-  }, [filteredPosts]);
-
-  const toggleTag = (tag: string) => {
-    setSelectedTags((prev) => (prev[0] === tag ? [] : [tag]));
-  };
+  const allAvailableTags = globalTagsData?.tags || [];
 
   return (
     <section className="p-3 lg:p-6 min-h-screen flex flex-col gap-6 bg-background text-foreground">
-      {/* --- HEADER --- */}
       <header className="relative border-3 border-double p-3 flex flex-col gap-3">
         <CornerFlourish className="-top-1 -left-1" />
         <CornerFlourish className="-bottom-1 -right-1 rotate-180" />
@@ -151,7 +216,6 @@ export default function MyPosts() {
         </p>
       </header>
 
-      {/* --- FILTERS --- */}
       <FilterSection
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
@@ -165,15 +229,15 @@ export default function MyPosts() {
           "diary",
           "projects",
         ]}
-        selectedCategory={selectedCategory}
+        selectedCategory={activeCategory}
         setSelectedCategory={setSelectedCategory}
         sortBy={sortBy}
         setSortBy={setSortBy}
         sortOrder={sortOrder}
         setSortOrder={setSortOrder}
+        clearAllFilters={() => router.push(pathname, { scroll: false })}
       />
 
-      {/* --- CONTENT --- */}
       {hasError ? (
         <div className="border-3 border-double border-destructive p-4 flex items-center gap-2 bg-destructive/10">
           <AlertTriangle className="h-5 w-5 text-destructive" />
@@ -214,14 +278,16 @@ export default function MyPosts() {
               <div className="flex gap-2">
                 <button
                   disabled={page === 1 || isPageLoading}
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  onClick={() =>
+                    updateURL("page", String(Math.max(1, page - 1)), false)
+                  }
                   className="border-3 border-double px-3 py-1 text-xs font-bold hover:bg-primary hover:text-primary-foreground disabled:opacity-50 transition-colors"
                 >
                   Prev
                 </button>
                 <button
                   disabled={page === activeData.totalPages || isPageLoading}
-                  onClick={() => setPage((p) => p + 1)}
+                  onClick={() => updateURL("page", String(page + 1), false)}
                   className="border-3 border-double px-3 py-1 text-xs font-bold hover:bg-primary hover:text-primary-foreground disabled:opacity-50 transition-colors"
                 >
                   Next
@@ -232,5 +298,18 @@ export default function MyPosts() {
         </>
       )}
     </section>
+  );
+}
+
+// This outer wrapper ensures the inner component (and its hooks)
+// never mounts unless the user is successfully authenticated.
+export default function MyPosts() {
+  return (
+    <AuthGuard
+      message="Access denied. Please provide credentials to access security and profile settings."
+      level="critical"
+    >
+      <MyPostsContent />
+    </AuthGuard>
   );
 }

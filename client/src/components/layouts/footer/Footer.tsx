@@ -23,7 +23,7 @@ export default function Footer() {
 
           <Logo />
 
-          <p className="text-xs">
+          <p className="text-sm">
             Building beautiful dashboards for the modern web. We make the
             complex simple and the simple beautiful.
           </p>
@@ -43,7 +43,7 @@ export default function Footer() {
                   key={link.href}
                   href={link.href}
                   className={cn(
-                    "border-3 border-double transition-all duration-300 p-3 flex gap-1 text-xs items-center hover:bg-card hover:text-primary",
+                    "border-3 border-double transition-all duration-300 p-3 flex gap-1 text-sm items-center hover:bg-card hover:text-primary",
                     isActive && "bg-card text-primary",
                   )}
                 >
@@ -60,12 +60,12 @@ export default function Footer() {
             <h3 className="font-bold">Stay Connected</h3>
           </div>
 
-          <p className="text-xs">
+          <p className="text-sm">
             Subscribe to our newsletter to get the latest updates and news.
           </p>
 
           <div className="p-3 border-3 border-double bg-card/30">
-            <p className="text-xs font-bold text-primary">
+            <p className="text-sm font-bold text-primary">
               This feature is not available yet.
             </p>
           </div>
@@ -77,20 +77,20 @@ export default function Footer() {
         <CornerFlourish className="-top-1 -left-1" />
         <CornerFlourish className="-bottom-1 -right-1 rotate-180" />
 
-        <p className="text-xs font-bold text-primary">
+        <p className="text-sm font-bold text-primary">
           &copy; {currentYear} Rotten Lab. All rights reserved.
         </p>
 
         <div className="flex gap-4">
           <Link
             href="privacy"
-            className="text-xs hover:text-primary transition-colors"
+            className="text-sm hover:text-primary transition-colors"
           >
             Privacy Policy
           </Link>
           <Link
             href="terms"
-            className="text-xs hover:text-primary transition-colors"
+            className="text-sm hover:text-primary transition-colors"
           >
             Terms of Service
           </Link>

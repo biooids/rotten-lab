@@ -30,6 +30,8 @@ export const authService = {
       SELECT 
         id, 
         username, 
+        profile_title,
+        avatar_url,
         role, 
         CASE 
           WHEN gemini_api_key IS NOT NULL AND gemini_api_key <> '' 
@@ -49,21 +51,31 @@ export const authService = {
     try {
       return await pool.query(sql, [id, encryptionKey]);
     } catch (error) {
-      console.error("[AUTH_SERVICE FATAL ERROR - findUserById]: ", error);
+      process.stderr.write(
+        `[AUTH_SERVICE FATAL ERROR - findUserById]: ${(error as Error).message}\nStack: ${(error as Error).stack}\n`,
+      );
       throw error;
     }
   },
 
-  async updateUser(username: string, id: string) {
+  async updateUser(
+    username: string | null,
+    profileTitle: string | null,
+    avatarUrl: string | null,
+    id: string,
+  ) {
     const sql = `
       UPDATE users 
-      SET username = $1, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $2
-      RETURNING id, username, role, updated_at;
+      SET 
+        username = COALESCE($1, username), 
+        profile_title = COALESCE($2, profile_title),
+        avatar_url = COALESCE($3, avatar_url),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $4
+      RETURNING id, username, profile_title, avatar_url, role, updated_at;
     `;
-    return await pool.query(sql, [username, id]);
+    return await pool.query(sql, [username, profileTitle, avatarUrl, id]);
   },
-
   async updateApiKeys(
     id: string,
     geminiApiKey: string | null,

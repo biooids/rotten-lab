@@ -1,5 +1,6 @@
 //src/components/pages/home/BioAndSkills.tsx
 import CornerFlourish from "@/components/shared/CornerFlourish";
+import { FaGithub, FaLinkedin, FaXTwitter } from "react-icons/fa6";
 import Link from "next/dist/client/link";
 
 const bioData = [
@@ -57,6 +58,24 @@ const frontendData = [
   },
 ];
 
+const socialLinks = [
+  {
+    label: "github",
+    href: "https://github.com/protocols-farmer",
+    icon: FaGithub,
+  },
+  {
+    label: "linkedin",
+    href: "https://www.linkedin.com/in/hwapyong-maniragaba-edouard-415961344/[[",
+    icon: FaLinkedin,
+  },
+  {
+    label: "twitter",
+    href: "https://x.com/protocolsfarmer",
+    icon: FaXTwitter,
+  },
+];
+
 function BioAndSkills() {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -93,11 +112,23 @@ function BioAndSkills() {
           ))}
         </div>
 
-        <div className="flex justify-between">
-          {/* <div className="border-3 border-double p-1 shrink-0">
-                <link.icon className="h-5 w-5 text-primary" />
-              </div> */}
-          <span>linked in</span>
+        {/* Rendered Social Links */}
+        <div className="flex gap-4 pt-2 pl-3">
+          {socialLinks.map((link, index) => {
+            const Icon = link.icon;
+            return (
+              <Link
+                key={index}
+                href={link.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-foreground hover:text-primary transition-colors duration-200"
+                aria-label={link.label}
+              >
+                <Icon className="w-5 h-5" />
+              </Link>
+            );
+          })}
         </div>
       </div>
 

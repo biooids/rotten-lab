@@ -96,14 +96,16 @@ export default function MaintenanceProtocol({ showToast }: Props) {
       {/* --- HEADER CONTROLS --- */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex gap-2 items-center text-primary">
-          <h4 className="font-bold text-sm">System Directives</h4>
+          <h4 className="bg-primary text-primary-foreground font-bold p-1 w-fit">
+            System status and maintenance.
+          </h4>
         </div>
 
         <button
           disabled={isMaintUpdating}
           onClick={() => setIsMaintLocal(!isMaintLocal)}
           className={cn(
-            "flex items-center gap-2 px-3 py-1 border-3 border-double font-bold text-xs transition-all disabled:opacity-50",
+            "flex items-center gap-2 px-3 py-1 border-3 border-double font-bold text-sm transition-all disabled:opacity-50",
             isMaintLocal
               ? "bg-destructive text-destructive-foreground border-destructive"
               : "bg-primary/10 text-primary border-primary",
@@ -119,14 +121,12 @@ export default function MaintenanceProtocol({ showToast }: Props) {
       </div>
 
       {/* --- INPUT LAYER WITH LIVE COUNT --- */}
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-1">
         <div className="flex justify-between items-center w-full">
-          <label className="text-xs font-bold opacity-70">
-            Broadcast Message
-          </label>
+          <label className="text-sm  ">Broadcast Message</label>
           <span
             className={cn(
-              "text-xs font-mono font-bold",
+              "text-sm ",
               isInvalidLength ? "text-destructive" : "text-primary",
             )}
           >
@@ -142,7 +142,7 @@ export default function MaintenanceProtocol({ showToast }: Props) {
             onChange={(e) => setMaintMsg(e.target.value)}
             placeholder="System protocols are being rewritten..."
             className={cn(
-              "flex-1 bg-background border-3 border-double p-2 text-xs font-bold outline-none transition-colors disabled:opacity-50",
+              "flex-1 bg-background border-3 border-double p-2 text-sm font-bold outline-none transition-colors disabled:opacity-50",
               isInvalidLength
                 ? "border-destructive/50 focus:border-destructive"
                 : "border-double focus:border-primary",
@@ -163,7 +163,7 @@ export default function MaintenanceProtocol({ showToast }: Props) {
 
         {/* --- ERROR FEEDBACK CONTAINER --- */}
         {fieldErrors.maintenance_message && (
-          <p className="text-xs text-destructive font-bold flex items-center gap-1 mt-1 animate-in fade-in-50 duration-200">
+          <p className="text-sm text-destructive font-bold flex items-center gap-1 mt-1 animate-in fade-in-50 duration-200">
             <AlertTriangle className="h-3 w-3" />
             {fieldErrors.maintenance_message}
           </p>
@@ -172,10 +172,10 @@ export default function MaintenanceProtocol({ showToast }: Props) {
 
       {/* --- GLOBAL AI ENGINE ACCESS --- */}
       <div className="border-t-3 border-double border-border mt-2 pt-4 flex flex-col gap-3">
-        <label className="text-xs font-bold opacity-70">
+        <label className="text-sm font-bold opacity-70">
           Global AI Engine Access
         </label>
-        <p className="text-[10px] font-bold opacity-60 leading-tight">
+        <p className="text-sm  ">
           Allow standard users to scan using the server's `.env` master keys. If
           disabled, standard users must provide a BYOK in their account
           settings.
@@ -188,7 +188,7 @@ export default function MaintenanceProtocol({ showToast }: Props) {
             disabled={isMaintUpdating}
             onClick={() => setIsGeminiGlobal(!isGeminiGlobal)}
             className={cn(
-              "flex-1 flex justify-center items-center gap-2 px-3 py-2 border-3 border-double font-bold text-xs transition-all disabled:opacity-50 disabled:cursor-not-allowed",
+              "flex-1 flex justify-center items-center gap-2 px-3 py-2 border-3 border-double font-bold text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed",
               isGeminiGlobal
                 ? "bg-blue-500/10 text-blue-500 border-blue-500"
                 : "bg-background text-foreground opacity-60 border-foreground/30 hover:border-blue-500 hover:opacity-100",
@@ -199,7 +199,7 @@ export default function MaintenanceProtocol({ showToast }: Props) {
             ) : (
               <Lock className="h-3 w-3" />
             )}
-            Gemini Global: {isGeminiGlobal ? "ENABLED" : "DISABLED"}
+            Gemini Global: {isGeminiGlobal ? "Enabled" : "Disabled"}
           </button>
 
           {/* CLAUDE TOGGLE */}
@@ -208,7 +208,7 @@ export default function MaintenanceProtocol({ showToast }: Props) {
             disabled={isMaintUpdating}
             onClick={() => setIsClaudeGlobal(!isClaudeGlobal)}
             className={cn(
-              "flex-1 flex justify-center items-center gap-2 px-3 py-2 border-3 border-double font-bold text-xs transition-all disabled:opacity-50 disabled:cursor-not-allowed",
+              "flex-1 flex justify-center items-center gap-2 px-3 py-2 border-3 border-double font-bold text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed",
               isClaudeGlobal
                 ? "bg-orange-500/10 text-orange-500 border-orange-500"
                 : "bg-background text-foreground opacity-60 border-foreground/30 hover:border-orange-500 hover:opacity-100",
@@ -219,7 +219,7 @@ export default function MaintenanceProtocol({ showToast }: Props) {
             ) : (
               <Lock className="h-3 w-3" />
             )}
-            Claude Global: {isClaudeGlobal ? "ENABLED" : "DISABLED"}
+            Claude Global: {isClaudeGlobal ? "Enabled" : "Disabled"}
           </button>
         </div>
       </div>

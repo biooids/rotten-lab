@@ -1,19 +1,11 @@
-//src/components/layouts/sidebar/sideBarCards/CategoryCard.tsx
+// src/components/layouts/sidebar/sideBarCards/CategoryCard.tsx
 "use client";
 
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import {
-  Monitor,
-  Dna,
-  Files,
-  FlaskConical,
-  Star,
-  Shapes,
-  Loader2,
-} from "lucide-react";
+import { Monitor, Dna, Files, FlaskConical, Star, Shapes } from "lucide-react";
 import { useGetPostsQuery } from "@/lib/features/posts/postsApiSlice";
 
 export default function CategoryCard() {
@@ -60,7 +52,6 @@ export default function CategoryCard() {
       count: posts.filter((p) => p.category === "bio-engineering").length,
       detail: "simple",
     },
-
     {
       title: "Diary",
       icon: Dna,
@@ -85,9 +76,6 @@ export default function CategoryCard() {
             )}
           >
             <div className="flex gap-1 items-center  text-primary ">
-              {/* <span className="border-3 border-double p-1">
-                <cat.icon className="h-5 w-5" />
-              </span> */}
               <h3>{cat.title}</h3>
             </div>
 
@@ -126,10 +114,11 @@ export default function CategoryCard() {
             </div>
 
             <Button
+              asChild
               variant="outline"
-              className="border-3 border-double rounded-none "
+              className="border-3 border-double rounded-none w-full pointer-events-none"
             >
-              Enter Room
+              <span>Enter Room</span>
             </Button>
           </Link>
         );

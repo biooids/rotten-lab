@@ -32,7 +32,7 @@ export default function Header() {
         {/* Dynamic, Hydration-Safe User Badge Display */}
         {mounted && isAuthenticated && user ? (
           <div className="flex items-center gap-2">
-            <span className="text-xs font-bold">Welcome, {user.username}</span>
+            <span className="text-sm font-bold">Welcome, {user.username}</span>
             <span
               className={cn(
                 "text-[9px] font-black tracking-widest  px-1.5 py-0.5 border-3 border-double selection:bg-transparent",
@@ -48,7 +48,10 @@ export default function Header() {
             </span>
           </div>
         ) : (
-          "Welcome user (no auth)"
+          <p>
+            Welcome{" "}
+            <span className="text-sm font-bold text-primary">Visitor</span>{" "}
+          </p>
         )}
       </div>
 

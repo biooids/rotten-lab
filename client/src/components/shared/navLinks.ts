@@ -9,6 +9,7 @@ import {
   ShieldAlert,
   LucideIcon,
   User2,
+  Files,
 } from "lucide-react";
 
 export type NavLink = {
@@ -23,5 +24,7 @@ export const navLinks: NavLink[] = [
   { href: "/contact", label: "Contact", icon: MessageCircle },
   { href: "/admin", label: "Admin", icon: ShieldAlert },
   { href: "/me", label: "Profile", icon: User2 },
+  { href: "/posts/my-posts", label: "My Posts", icon: Files },
+
   { href: "/ai-lab", label: "AI Lab", icon: BookOpen },
 ];

@@ -16,7 +16,7 @@ DROP FUNCTION IF EXISTS set_updated_at CASCADE;
 
 -- --- 2. CORE SETUP ---
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
+CREATE EXTENSION IF NOT EXISTS "pg_trgm";
 -- Enum types
 CREATE TYPE post_category AS ENUM ('bio-engineering', 'computer-science', 'projects', 'diary'); 
 CREATE TYPE project_subcategory AS ENUM ('serious', 'random');
@@ -35,6 +35,8 @@ $$ LANGUAGE plpgsql;
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     username VARCHAR(20) UNIQUE NOT NULL CHECK (char_length(username) >= 3),
+    profile_title VARCHAR(100) DEFAULT 'Member',                                   -- ADDED THIS LINE
+    avatar_url VARCHAR(2048) DEFAULT 'https://res.cloudinary.com/dhr9zmb3i/image/upload/v1782116959/portfolio/p8f5k0lhoukdzptxy6fj.jpg', -- ADDED THIS LINE
     password_hash VARCHAR(255) NOT NULL CHECK (char_length(password_hash) >= 60),
     role user_role NOT NULL DEFAULT 'user', 
     gemini_api_key TEXT, -- Encrypted at rest using pgcrypto
@@ -184,11 +186,12 @@ CREATE TABLE report_chats (
 );
 
 -- --- 6. PERFORMANCE INDEXES ---
+CREATE INDEX idx_posts_created_at ON posts(created_at DESC);
 CREATE INDEX idx_posts_search ON posts USING GIN(search_vector);
 CREATE INDEX idx_posts_category ON posts(category);
 CREATE INDEX idx_posts_tags ON posts USING GIN(tags);
 CREATE INDEX idx_posts_author ON posts(author_id);
-
+CREATE INDEX idx_posts_title_trgm ON posts USING GIN(title gin_trgm_ops);
 CREATE INDEX idx_audit_logs_search ON audit_logs USING GIN(search_vector);
 CREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at DESC);
 

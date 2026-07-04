@@ -9,6 +9,9 @@ export type ProjectSubcategory = "serious" | "random" | null;
 export interface Post {
   id: string;
   author_id: string;
+  author_name: string; // Added from JOIN
+  author_role: string; // Added from JOIN
+  author_avatar: string; // Added from JOIN
   category: PostCategory;
   subcategory: ProjectSubcategory;
   thumbnail: string;

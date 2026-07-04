@@ -1,9 +1,14 @@
-//src/lib/features/auth/authSchema.ts
 import { z } from "zod";
+
+const imageExtensions = /\.(jpeg|jpg|gif|png|webp|svg)(\?.*)?(#.*)?$/i;
+// Validates Base64 Data URIs and limits size implicitly via string length if needed
+const base64ImageRegex =
+  /^data:image\/(jpeg|jpg|png|webp|gif|svg\+xml);base64,/;
 
 export const loginSchema = z.object({
   username: z
     .string()
+    .trim() // Prevents accidental space typos
     .min(3, "Username must be at least 3 characters.")
     .max(20, "Username cannot exceed 20 characters."),
   password: z
@@ -16,6 +21,7 @@ export const signupSchema = z
   .object({
     username: z
       .string()
+      .trim()
       .min(3, "Username must be at least 3 characters.")
       .max(20, "Username cannot exceed 20 characters."),
     password: z
@@ -32,11 +38,48 @@ export const signupSchema = z
 export const updateSchema = z.object({
   username: z
     .string()
+    .trim()
     .min(3, "Username must be at least 3 characters.")
-    .max(20, "Username cannot exceed 20 characters."),
+    .max(20, "Username cannot exceed 20 characters.")
+    .optional(),
 
-  geminiApiKey: z.string().optional(),
-  claudeApiKey: z.string().optional(),
+  profileTitle: z
+    .string()
+    .max(100, "Profile title cannot exceed 100 characters.")
+    .optional()
+    // Transform runs after optional check to ensure fallback works
+    .transform((val) => (!val || val.trim() === "" ? "Member" : val.trim())),
+
+  // Validates structure and prevents massive non-image text blobs
+  avatarBase64: z
+    .string()
+    .regex(base64ImageRegex, "Invalid base64 image format")
+    .optional()
+    .or(z.literal("")),
+
+  avatarUrl: z
+    .string()
+    .max(2048, "Avatar URL cannot exceed 2048 characters.")
+    .trim()
+    .or(z.literal("")) // Safely allow empty string first
+    .optional() // Allow undefined next
+    .refine(
+      (val) => {
+        if (!val) return true; // Passes if undefined or ""
+
+        const isValidUrl = z.string().url().safeParse(val).success;
+        const isImageUrl = imageExtensions.test(val);
+
+        return isValidUrl && isImageUrl;
+      },
+      {
+        message:
+          "Please enter a valid image URL ending in .jpg, .png, .gif, etc.",
+      },
+    ),
+
+  geminiApiKey: z.string().trim().optional().or(z.literal("")),
+  claudeApiKey: z.string().trim().optional().or(z.literal("")),
 });
 
 export const changePasswordSchema = z

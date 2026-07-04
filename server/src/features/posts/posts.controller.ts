@@ -40,7 +40,7 @@ export const postsController = {
         ) as JWTPayload;
       } catch (err: any) {
         process.stderr.write(
-          `[uploadMedia] JWT Verify Error: ${err.message}\n`,
+          `[uploadMedia] JWT Verify Error: ${err.message}\nStack: ${err.stack}\n`,
         );
         res.statusCode = 401;
         res.setHeader("Content-Type", "application/json");
@@ -49,30 +49,32 @@ export const postsController = {
       }
 
       // --- MANUAL REDIS RATE LIMITING (Max 10 uploads per hour per user) ---
-      try {
-        const uploadLimitKey = `ratelimit:upload:${decoded.id}`;
-        const uploadsCount = await redisClient.incr(uploadLimitKey);
+      if (process.env["NODE_ENV"] !== "development") {
+        try {
+          const uploadLimitKey = `ratelimit:upload:${decoded.id}`;
+          const uploadsCount = await redisClient.incr(uploadLimitKey);
 
-        if (uploadsCount === 1) {
-          await redisClient.expire(uploadLimitKey, 3600); // 1 hour TTL
-        }
+          if (uploadsCount === 1) {
+            await redisClient.expire(uploadLimitKey, 3600); // 1 hour TTL
+          }
 
-        if (uploadsCount > 10) {
-          res.statusCode = 429;
-          res.setHeader("Content-Type", "application/json");
-          res.end(
-            JSON.stringify({
-              error:
-                "Upload limit exceeded. Maximum 10 media uploads per hour to prevent storage abuse.",
-            }),
+          if (uploadsCount > 10) {
+            res.statusCode = 429;
+            res.setHeader("Content-Type", "application/json");
+            res.end(
+              JSON.stringify({
+                error:
+                  "Upload limit exceeded. Maximum 10 media uploads per hour to prevent storage abuse.",
+              }),
+            );
+            return;
+          }
+        } catch (err: any) {
+          process.stderr.write(
+            `[uploadMedia] Redis Error: ${err.message}\nStack: ${err.stack}\n`,
           );
-          return;
+          // Fail open if Redis crashes so legitimate users can still upload
         }
-      } catch (err: any) {
-        process.stderr.write(
-          `[uploadMedia] Redis Error: ${err.message}\nStack: ${err.stack}\n`,
-        );
-        // Fail open if Redis crashes so legitimate users can still upload
       }
       // ---------------------------------------------------------------------
 
@@ -121,7 +123,7 @@ export const postsController = {
 
         file.on("error", (err: any) => {
           process.stderr.write(
-            `[uploadMedia] Busboy File Error: ${err.message}\n`,
+            `[uploadMedia] Busboy File Error: ${err.message}\nStack: ${err.stack}\n`,
           );
           if (err.message === "INVALID_MAGIC_NUMBER" && !res.writableEnded) {
             res.statusCode = 415;
@@ -135,17 +137,20 @@ export const postsController = {
             folder: "portfolio/posts",
             resource_type: "auto",
             allowed_formats: ["jpg", "jpeg", "png", "webp", "gif"],
+            timeout: 60000, // Strict 60-second timeout to prevent ghost hanging
           },
           (error, result) => {
             if (error) {
               process.stderr.write(
-                `[uploadMedia] Cloudinary Error: ${error.message}\n`,
+                `[uploadMedia] Cloudinary Callback Error: ${error.message}\n`,
               );
               if (!res.writableEnded) {
-                res.statusCode = 500;
+                res.statusCode = 502; // 502 Bad Gateway (Upstream error)
                 res.setHeader("Content-Type", "application/json");
                 res.end(
-                  JSON.stringify({ error: `Upload failed: ${error.message}` }),
+                  JSON.stringify({
+                    error: `Network/Upload failed: ${error.message}`,
+                  }),
                 );
               }
               return;
@@ -157,6 +162,23 @@ export const postsController = {
             }
           },
         );
+
+        // This block explicitly catches native Node stream errors when the internet drops.
+        // It prevents the fatal unhandled event crash and logs the exact failure condition.
+        uploadStream.on("error", (err: any) => {
+          process.stderr.write(
+            `[uploadMedia] FATAL STREAM CRASH PREVENTED: ${err.message}\nStack: ${err.stack}\n`,
+          );
+          if (!res.writableEnded) {
+            res.statusCode = 502;
+            res.setHeader("Content-Type", "application/json");
+            res.end(
+              JSON.stringify({
+                error: `Upload connection lost: ${err.message}`,
+              }),
+            );
+          }
+        });
 
         file.pipe(uploadStream);
       });
@@ -419,29 +441,31 @@ export const postsController = {
       }
 
       // --- MANUAL REDIS RATE LIMITING (Max 5 posts per hour per user) ---
-      try {
-        const createLimitKey = `ratelimit:createpost:${decoded.id}`;
-        const createsCount = await redisClient.incr(createLimitKey);
+      if (process.env["NODE_ENV"] !== "development") {
+        try {
+          const createLimitKey = `ratelimit:createpost:${decoded.id}`;
+          const createsCount = await redisClient.incr(createLimitKey);
 
-        if (createsCount === 1) {
-          await redisClient.expire(createLimitKey, 3600); // 1 hour TTL
-        }
+          if (createsCount === 1) {
+            await redisClient.expire(createLimitKey, 3600); // 1 hour TTL
+          }
 
-        if (createsCount > 5) {
-          res.statusCode = 429;
-          res.setHeader("Content-Type", "application/json");
-          res.end(
-            JSON.stringify({
-              error:
-                "Creation limit exceeded. Maximum 5 posts per hour to prevent database abuse.",
-            }),
+          if (createsCount > 5) {
+            res.statusCode = 429;
+            res.setHeader("Content-Type", "application/json");
+            res.end(
+              JSON.stringify({
+                error:
+                  "Creation limit exceeded. Maximum 5 posts per hour to prevent database abuse.",
+              }),
+            );
+            return;
+          }
+        } catch (err: any) {
+          process.stderr.write(
+            `[createPost] Redis Error: ${err.message}\nStack: ${err.stack}\n`,
           );
-          return;
         }
-      } catch (err: any) {
-        process.stderr.write(
-          `[createPost] Redis Error: ${err.message}\nStack: ${err.stack}\n`,
-        );
       }
       // ------------------------------------------------------------------
 
@@ -621,7 +645,6 @@ export const postsController = {
       res.end(JSON.stringify({ error: err.message }));
     }
   },
-
   async updatePost(
     req: IncomingMessage,
     res: ServerResponse,
@@ -763,6 +786,38 @@ export const postsController = {
           }),
         );
         return;
+      }
+
+      const finalCategory = incomingData.category || post.category;
+      const finalSubcategory =
+        incomingData.subcategory !== undefined
+          ? incomingData.subcategory
+          : post.subcategory;
+      const finalGithubLink =
+        incomingData.github_link !== undefined
+          ? incomingData.github_link
+          : post.github_link;
+
+      if (finalCategory === "projects") {
+        if (
+          !finalSubcategory ||
+          !["serious", "random"].includes(finalSubcategory)
+        ) {
+          res.statusCode = 400;
+          res.end(
+            JSON.stringify({ error: "Subcategory required for projects." }),
+          );
+          return;
+        }
+        if (finalSubcategory === "serious" && !finalGithubLink) {
+          res.statusCode = 400;
+          res.end(
+            JSON.stringify({
+              error: "Serious projects must have a GitHub link.",
+            }),
+          );
+          return;
+        }
       }
 
       const ALLOWED = [
@@ -993,6 +1048,23 @@ export const postsController = {
     } catch (err: any) {
       process.stderr.write(
         `[getSuperAdminDiary] ERROR: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      res.statusCode = 500;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ error: err.message }));
+    }
+  },
+
+  async getTags(_req: IncomingMessage, res: ServerResponse): Promise<void> {
+    try {
+      const tagsList = await postsService.getAllUniqueTags();
+
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ tags: tagsList }));
+    } catch (err: any) {
+      process.stderr.write(
+        `[getTags] ERROR: ${err.message}\nStack: ${err.stack}\n`,
       );
       res.statusCode = 500;
       res.setHeader("Content-Type", "application/json");

@@ -1,4 +1,3 @@
-// src/components/pages/posts/PostDetails.tsx
 "use client";
 
 import React, { useState, useEffect } from "react";
@@ -21,6 +20,7 @@ import {
   useGetPostQuery,
   useDeletePostMutation,
 } from "@/lib/features/posts/postsApiSlice";
+import { formatDistanceToNow } from "date-fns";
 
 const SmartImage = ({
   src,
@@ -69,8 +69,8 @@ const SmartImage = ({
         unoptimized={isCloudinary}
         sizes={isAvatar ? "40px" : "(max-width: 1200px) 100vw, 80vw"}
         className={cn(
-          "object-cover transition--500",
-          isLoading ? "" : "",
+          "object-cover object-center transition-opacity duration-500",
+          isLoading ? "opacity-0" : "opacity-100",
           className,
         )}
         onLoad={() => setIsLoading(false)}
@@ -102,7 +102,6 @@ const DetailsSkeleton = () => (
   </div>
 );
 
-// ADDED 'diary' to route mappings
 const categoryRoutes: Record<string, string> = {
   "computer-science": "/posts/computer-science",
   "bio-engineering": "/posts/bio-engineering",
@@ -110,7 +109,6 @@ const categoryRoutes: Record<string, string> = {
   diary: "/posts/diary",
 };
 
-// ADDED 'diary' to display names
 const categoryNames: Record<string, string> = {
   "computer-science": "Computer Science",
   "bio-engineering": "Bio-engineering",
@@ -145,9 +143,11 @@ export default function PostDetails({ postId }: { postId: string }) {
     }
   };
 
-  const AUTHOR_NAME = "protocols_farmer";
-  const AUTHOR_ROLE = "Back end dev";
+  // FIXED: Safely bypass TS constraints and map exactly to the backend SQL aliases
+  const AUTHOR_NAME = (post as any)?.author_name || "protocols_farmer";
+  const AUTHOR_ROLE = (post as any)?.author_role || "Back end dev";
   const AUTHOR_AVATAR =
+    (post as any)?.author_avatar ||
     "https://res.cloudinary.com/dhr9zmb3i/image/upload/v1772941590/cat_kw8xmu.jpg";
 
   useEffect(() => {
@@ -327,8 +327,18 @@ export default function PostDetails({ postId }: { postId: string }) {
               </div>
             </div>
             <div className="flex flex-col text-xs font-bold text-left sm:text-right justify-center">
-              <p>Created: {new Date(post.created_at).toLocaleDateString()}</p>
-              <p>Edited: {new Date(post.updated_at).toLocaleDateString()}</p>
+              <p>
+                Created:{" "}
+                {formatDistanceToNow(new Date(post.created_at), {
+                  addSuffix: true,
+                })}
+              </p>
+              <p>
+                Edited:{" "}
+                {formatDistanceToNow(new Date(post.updated_at), {
+                  addSuffix: true,
+                })}
+              </p>
             </div>
           </div>
         </div>
@@ -387,8 +397,8 @@ export default function PostDetails({ postId }: { postId: string }) {
           <div className="border-l-3 border-double pl-3">
             <p className="text-sm font-bold">{post.short_description}</p>
           </div>
-          <div className="flex flex-col gap-3 mt-3">
-            <h4 className="bg-primary text-primary-foreground font-bold p-1 w-fit text-sm">
+          <div className="flex flex-col gap-3 mt-3 ">
+            <h4 className="bg-primary text-primary-foreground font-bold p-1 w-fit text-sm border-3 border-double">
               Core Content :
             </h4>
             <div className="border-l-3 border-double pl-3">

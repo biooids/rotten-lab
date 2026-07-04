@@ -5,12 +5,14 @@ export type UserRole = "user" | "admin" | "super_admin";
 export interface User {
   id: string;
   username: string;
+  profile_title: string;
+  avatar_url: string;
+  role: "super_admin" | "admin" | "user";
   password_hash: string;
-  role: UserRole;
-  gemini_api_key?: string | null;
-  claude_api_key?: string | null;
-  created_at: string;
-  updated_at: string;
+  gemini_api_key?: string;
+  claude_api_key?: string;
+  created_at: Date;
+  updated_at: Date;
 }
 
 export interface RefreshTokenSession {
@@ -53,6 +55,9 @@ export interface ChangePasswordDTO {
 
 export interface UpdateAccountDTO {
   username?: string;
+  profileTitle?: string;
+  avatarBase64?: string;
+  avatarUrl?: string;
   geminiApiKey?: string;
   claudeApiKey?: string;
 }

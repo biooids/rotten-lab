@@ -47,22 +47,39 @@ export const authApiSlice = createApi({
       }),
     }),
 
-    // MODIFIED: Expanded payload type to accept geminiApiKey and claudeApiKey
-    // Made username optional in case we only want to update API keys
+    // --- CHANGED: Added profileTitle, avatarBase64, and avatarUrl to the mutation payload
     updateAccount: builder.mutation<
       AuthResponse,
       {
         username?: string;
+        profileTitle?: string;
+        avatarBase64?: string;
+        avatarUrl?: string;
         geminiApiKey?: string;
         claudeApiKey?: string;
         id?: string;
       }
     >({
-      // MODIFIED: Destructured the new keys and added them to the request body
-      query: ({ username, geminiApiKey, claudeApiKey, id }) => ({
+      // --- CHANGED: Destructured the new keys and added them to the request body
+      query: ({
+        username,
+        profileTitle,
+        avatarBase64,
+        avatarUrl,
+        geminiApiKey,
+        claudeApiKey,
+        id,
+      }) => ({
         url: id ? `/auth/update?id=${id}` : "/auth/update",
         method: "PATCH",
-        body: { username, geminiApiKey, claudeApiKey },
+        body: {
+          username,
+          profileTitle,
+          avatarBase64,
+          avatarUrl,
+          geminiApiKey,
+          claudeApiKey,
+        },
       }),
     }),
 

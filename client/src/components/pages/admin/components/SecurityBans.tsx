@@ -67,8 +67,7 @@ export default function SecurityBans({ showToast }: Props) {
       <CornerFlourish className="-bottom-1 -right-1 rotate-180 text-destructive" />
 
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between border-b-3 border-destructive border-double pb-3">
-        <div className="flex gap-2 items-center text-destructive">
-          <ShieldAlert className="h-5 w-5" />
+        <div className="flex gap-1 items-center text-destructive">
           <h4 className="font-bold text-sm">Active Security Bans (Redis)</h4>
         </div>
         <Button

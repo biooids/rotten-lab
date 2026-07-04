@@ -5,6 +5,8 @@ export type UserRole = "user" | "admin" | "super_admin";
 export interface User {
   id: string;
   username: string;
+  profile_title?: string;
+  avatar_url?: string;
   role: UserRole;
 
   hasGeminiKey?: boolean;

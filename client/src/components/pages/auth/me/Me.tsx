@@ -38,17 +38,18 @@ import {
   ShieldAlert,
   Server,
   Activity,
+  Upload,
+  ImageIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import AuthGuard from "@/components/shared/AuthGuard";
-import { AuthState } from "@/lib/features/auth/authTypes";
 
 export default function Me() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const dispatch = useDispatch();
 
-  const { user } = useSelector((state: RootState) => state.auth as AuthState);
+  const { user } = useSelector((state: RootState) => state.auth as any);
 
   const targetId = searchParams.get("id");
   const isEditingOther = !!targetId && user?.role === "super_admin";
@@ -65,11 +66,18 @@ export default function Me() {
   const [testClaude, { isLoading: isTestingClaude }] =
     useTestClaudeConnectionMutation();
 
+  // --- PROFILE STATE ---
   const [username, setUsername] = useState(user?.username || "");
+  const [profileTitle, setProfileTitle] = useState(user?.profile_title || "");
+  const [avatarUrl, setAvatarUrl] = useState(user?.avatar_url || "");
+  const [avatarBase64, setAvatarBase64] = useState("");
+
+  // --- PASSWORD STATE ---
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
+  // --- API KEY STATE ---
   const [geminiApiKey, setGeminiApiKey] = useState("");
   const [claudeApiKey, setClaudeApiKey] = useState("");
   const [showGeminiKey, setShowGeminiKey] = useState(false);
@@ -112,17 +120,26 @@ export default function Me() {
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
 
   useEffect(() => {
-    if (user && !isEditingOther) setUsername(user.username);
+    if (user && !isEditingOther) {
+      setUsername(user.username);
+      setProfileTitle(user.profile_title || "");
+      setAvatarUrl(user.avatar_url || "");
+    }
   }, [user, isEditingOther]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
       const errors: Record<string, string> = {};
 
-      const profileVal = updateSchema.safeParse({ username });
+      const profileVal = updateSchema.safeParse({
+        username,
+        profileTitle,
+        avatarUrl: avatarBase64 ? undefined : avatarUrl,
+      });
+
       if (!profileVal.success) {
         profileVal.error.issues.forEach((is) => {
-          errors.username = is.message;
+          if (is.path[0]) errors[is.path[0].toString()] = is.message;
         });
       }
 
@@ -141,7 +158,16 @@ export default function Me() {
       setFieldErrors(errors);
     }, 200);
     return () => clearTimeout(timer);
-  }, [username, currentPassword, newPassword, confirmPassword, isEditingOther]);
+  }, [
+    username,
+    profileTitle,
+    avatarUrl,
+    avatarBase64,
+    currentPassword,
+    newPassword,
+    confirmPassword,
+    isEditingOther,
+  ]);
 
   const flashSuccess = (msg: string) => {
     setSuccess(msg);
@@ -160,26 +186,65 @@ export default function Me() {
     }
   };
 
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      // 5MB limit
+      setProfileFormError("Image size must be less than 5MB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setAvatarBase64(reader.result as string);
+      setAvatarUrl(""); // Clear URL if they upload a file
+      setProfileFormError("");
+    };
+    reader.onerror = () => {
+      setProfileFormError("Failed to read image file.");
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleUpdateProfile = async () => {
     setProfileFormError("");
-    const validation = updateSchema.safeParse({ username });
+    const validation = updateSchema.safeParse({
+      username,
+      profileTitle,
+      avatarUrl: avatarBase64 ? undefined : avatarUrl,
+    });
+
     if (!validation.success) {
       setProfileFormError(
-        validation.error.issues[0]?.message || "Invalid input",
+        validation.error.issues[0]?.message ||
+          "Invalid input detected in form fields.",
       );
       return;
     }
 
     setUpdatingTarget("profile");
     try {
-      const result = await updateAccount({
+      const payload: any = {
         username,
+        profileTitle,
         id: targetId || undefined,
-      }).unwrap();
+      };
+
+      if (avatarBase64) {
+        payload.avatarBase64 = avatarBase64;
+      } else if (avatarUrl) {
+        payload.avatarUrl = avatarUrl;
+      }
+
+      const result = await updateAccount(payload).unwrap();
 
       if (!isEditingOther) {
         dispatch(updateUser(result.user));
       }
+      setAvatarBase64(""); // Clear base64 after successful upload
+      setAvatarUrl(result.user.avatar_url || "");
       flashSuccess(
         isEditingOther
           ? "User profile updated."
@@ -195,7 +260,10 @@ export default function Me() {
           "Couldn't reach the server. Check your connection and try again.",
         );
       } else {
-        setProfileFormError(err.data?.error || "Failed to update profile.");
+        setProfileFormError(
+          err.data?.error ||
+            "Failed to update profile. Server rejected the request.",
+        );
       }
     } finally {
       setUpdatingTarget(null);
@@ -258,7 +326,7 @@ export default function Me() {
       if (!isEditingOther) {
         dispatch(updateUser(result.user));
       }
-      flashSuccess(`${engine.toUpperCase()} key removed securely.`);
+      flashSuccess(`${engine} key removed securely.`);
     } catch (err: any) {
       setApiKeyFormError(err.data?.error || `Failed to remove ${engine} key.`);
     } finally {
@@ -277,7 +345,8 @@ export default function Me() {
 
     if (!validation.success) {
       setPasswordFormError(
-        validation.error.issues[0]?.message || "Invalid input",
+        validation.error.issues[0]?.message ||
+          "Invalid input detected in password fields.",
       );
       return;
     }
@@ -298,7 +367,10 @@ export default function Me() {
           : "Password changed successfully.",
       );
     } catch (err: any) {
-      setPasswordFormError(err.data?.error || "Update failed.");
+      setPasswordFormError(
+        err.data?.error ||
+          "Password update failed. Server rejected the request.",
+      );
     }
   };
 
@@ -369,7 +441,7 @@ export default function Me() {
             </h1>
           </div>
           <div className="border-l-3 border-double pl-3">
-            <p className="text-sm font-bold">
+            <p className=" font-bold">
               {isEditingOther
                 ? `You are managing account ID: ${targetId}.`
                 : "You are the only user. Update profile or manage security settings."}
@@ -392,7 +464,7 @@ export default function Me() {
             ) : (
               <Check className="h-4 w-4 text-primary" />
             )}
-            <p className="text-xs font-bold">{error || success}</p>
+            <p className="text-sm font-bold">{error || success}</p>
           </div>
         )}
 
@@ -402,23 +474,147 @@ export default function Me() {
           <CornerFlourish className="-bottom-1 -right-1 rotate-180" />
 
           <div className="flex gap-1 items-center text-primary">
-            <h4 className="bg-primary text-primary-foreground font-bold p-1 w-fit text-sm">
+            <h4 className="bg-primary text-primary-foreground font-bold p-1 w-fit ">
               {isEditingOther ? "Target User Details" : "Profile Details"}
             </h4>
           </div>
 
-          <div className="border-l-3 border-double pl-3 flex flex-col gap-3">
+          <div className="border-l-3 border-double pl-3 flex flex-col gap-5">
+            {/* Avatar Row */}
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-bold text-primary">Username</label>
+              <label className="text-sm font-bold text-primary flex items-center justify-between gap-1">
+                <span className="flex items-center gap-1">
+                  Avatar / Profile Picture
+                </span>
+                <span
+                  className={cn(
+                    "text-sm",
+                    avatarUrl.length > 2048
+                      ? "text-destructive"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  {avatarUrl.length}/2048
+                </span>
+              </label>
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="relative w-16 h-16 border-3 border-double shrink-0 bg-card overflow-hidden flex items-center justify-center">
+                  {avatarBase64 || avatarUrl ? (
+                    <img
+                      src={avatarBase64 || avatarUrl}
+                      alt="Avatar Preview"
+                      className="object-cover w-full h-full"
+                    />
+                  ) : (
+                    <User className="h-8 w-8 text-muted-foreground opacity-50" />
+                  )}
+                </div>
+                <div className="flex flex-col gap-2 flex-1 min-w-[200px]">
+                  {/* CHANGED: Wrapped the upload file input and our new trash button in a flex container */}
+                  <div className="flex items-center gap-2">
+                    <div className="relative border-3 border-double px-3 flex items-center bg-card h-9 cursor-pointer hover:bg-card/80 transition-colors flex-1">
+                      <Upload className="h-4 w-4 text-primary mr-2" />
+                      <span className="text-sm font-bold text-primary">
+                        Upload Image File
+                      </span>
+                      <input
+                        type="file"
+                        disabled={isAnyLoading}
+                        className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
+                        onChange={handleImageUpload}
+                        accept="image/*"
+                      />
+                    </div>
+                    {/* CHANGED: Added conditional Button to remove base64 image and unlock URL input */}
+                    {avatarBase64 && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="h-9 w-9 border-3 border-double shrink-0 text-destructive border-destructive hover:bg-destructive hover:text-destructive-foreground"
+                        onClick={() => {
+                          setAvatarBase64("");
+                          setAvatarUrl(user?.avatar_url || "");
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                  <Input
+                    value={avatarUrl}
+                    onChange={(e) => {
+                      setAvatarUrl(e.target.value);
+                      setAvatarBase64(""); // Prioritize URL if they start typing here
+                    }}
+                    placeholder="Or paste an image URL..."
+                    className="border-3 border-double rounded-none text-sm"
+                    disabled={isAnyLoading || !!avatarBase64}
+                  />
+                </div>
+              </div>
+              {fieldErrors.avatarUrl && (
+                <p className="text-sm text-destructive font-bold mt-1">
+                  {fieldErrors.avatarUrl}
+                </p>
+              )}
+            </div>
+
+            {/* Profile Title */}
+            <div className="flex flex-col gap-1">
+              {/* CHANGED: Added flex justify-between to accommodate the new character counter span */}
+              <label className="text-sm font-bold text-primary flex justify-between items-center">
+                <span>Display Title</span>
+                {/* CHANGED: Added dynamic character length tracker */}
+                <span
+                  className={cn(
+                    "text-sm",
+                    profileTitle.length > 100
+                      ? "text-destructive"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  {profileTitle.length}/100
+                </span>
+              </label>
+              <Input
+                value={profileTitle}
+                onChange={(e) => setProfileTitle(e.target.value)}
+                placeholder="e.g. Back End Dev"
+                className="border-3 border-double rounded-none text-sm"
+                disabled={isAnyLoading}
+              />
+              {fieldErrors.profileTitle && (
+                <p className="text-sm text-destructive font-bold">
+                  {fieldErrors.profileTitle}
+                </p>
+              )}
+            </div>
+
+            {/* Username */}
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-bold text-primary flex justify-between items-center">
+                <span>Username</span>
+                <span
+                  className={cn(
+                    "text-sm",
+                    username.length > 20
+                      ? "text-destructive"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  {username.length}/20
+                </span>
+              </label>
               <Input
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="protocols_farmer"
-                className="border-3 border-double rounded-none text-xs"
+                className="border-3 border-double rounded-none text-sm"
                 disabled={isAnyLoading}
               />
               {fieldErrors.username && (
-                <p className="text-xs text-destructive font-bold">
+                <p className="text-sm text-destructive font-bold">
                   {fieldErrors.username}
                 </p>
               )}
@@ -427,9 +623,9 @@ export default function Me() {
             <Button
               onClick={handleUpdateProfile}
               disabled={isAnyLoading}
-              className="border-3 border-double rounded-none w-full sm:w-fit gap-1"
+              variant="outline"
+              className="border-3 border-double rounded-none w-full sm:w-fit gap-1 mt-2"
             >
-              <Save className="h-4 w-4" />
               <span>
                 {isUpdatingProfile && updatingTarget === "profile"
                   ? "Saving..."
@@ -439,10 +635,14 @@ export default function Me() {
               </span>
             </Button>
 
+            {/* EXPLICIT ERROR SUMMARY DIV FOR PROFILE */}
             {profileFormError && (
-              <p className="text-xs text-destructive font-bold">
-                {profileFormError}
-              </p>
+              <div className="border-3 border-double border-destructive bg-destructive/10 p-3 mt-1">
+                <p className="text-sm text-destructive font-bold flex items-center gap-2">
+                  <ShieldAlert className="h-4 w-4 shrink-0" />
+                  <span>{profileFormError}</span>
+                </p>
+              </div>
             )}
           </div>
         </div>
@@ -453,13 +653,13 @@ export default function Me() {
           <CornerFlourish className="-bottom-1 -right-1 rotate-180" />
 
           <div className="flex gap-1 items-center text-primary">
-            <h4 className="bg-primary text-primary-foreground font-bold p-1 w-fit text-sm">
+            <h4 className="bg-primary text-primary-foreground font-bold p-1 w-fit">
               AI Processing Keys (BYOK)
             </h4>
           </div>
 
           <div className="border-l-3 border-double pl-3 flex flex-col gap-4">
-            <p className="text-xs font-bold opacity-80 max-w-2xl">
+            <p className="text-sm  opacity-80 max-w-2xl">
               Provide your own API keys to bypass rate limits and utilize
               premium AI models for security audits. Keys are encrypted at rest
               and never displayed after saving.
@@ -468,17 +668,17 @@ export default function Me() {
             {/* Gemini Input */}
             <div className="flex flex-col gap-1">
               <div className="flex items-center justify-between gap-2 flex-wrap">
-                <label className="text-xs font-bold text-blue-500">
+                <label className="text-sm font-bold text-blue-500">
                   Google Gemini API Key
                 </label>
                 <div className="flex gap-3 items-center">
                   {user?.hasGeminiKey ? (
-                    <span className="text-[10px] font-bold text-primary bg-primary/10 border-3 border-double px-2">
-                      [ PERSONAL KEY ]
+                    <span className="text-sm font-bold text-primary">
+                      Personal Key
                     </span>
                   ) : isAdmin ? (
-                    <span className="text-[10px] font-bold text-primary bg-primary/10 border-3 border-double px-2">
-                      [ SYSTEM DEFAULT ]
+                    <span className="text-sm font-bold text-primary">
+                      System Key
                     </span>
                   ) : null}
 
@@ -486,10 +686,9 @@ export default function Me() {
                     <button
                       onClick={handleTestGemini}
                       disabled={isAnyLoading}
-                      className="text-[10px] font-bold text-blue-500 hover:text-blue-500/80 outline-none flex items-center gap-1 uppercase disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="text-sm cursor-pointer border-3 border-double p-1 font-bold text-blue-500 hover:text-blue-500/80 outline-none flex items-center gap-1  disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <Activity className="h-3 w-3" />
-                      {isTestingGemini ? "Pinging..." : "Test Link"}
+                      {isTestingGemini ? "Pinging..." : "Test Key"}
                     </button>
                   )}
 
@@ -497,7 +696,7 @@ export default function Me() {
                     <button
                       onClick={() => handleClearApiKey("gemini")}
                       disabled={isAnyLoading}
-                      className="text-[10px] font-bold text-destructive hover:underline outline-none uppercase disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
+                      className="text-sm cursor-pointer border-3 border-double p-1 font-bold text-destructive hover:text-destructive/80 outline-none  disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
                     >
                       {isUpdatingProfile && updatingTarget === "clear-gemini"
                         ? "Clearing..."
@@ -516,7 +715,7 @@ export default function Me() {
                       ? "Enter new key to overwrite existing..."
                       : "AIzaSy..."
                   }
-                  className="border-3 border-double rounded-none text-xs pr-10 border-blue-500/50 focus-visible:ring-blue-500"
+                  className="border-3 border-double rounded-none text-sm pr-10 border-blue-500/50 focus-visible:ring-blue-500"
                   disabled={isAnyLoading}
                 />
                 <button
@@ -555,17 +754,17 @@ export default function Me() {
             {/* Claude Input */}
             <div className="flex flex-col gap-1 mt-2">
               <div className="flex items-center justify-between gap-2 flex-wrap">
-                <label className="text-xs font-bold text-orange-500">
+                <label className="text-sm font-bold text-orange-500">
                   Anthropic Claude API Key
                 </label>
                 <div className="flex gap-3 items-center">
                   {user?.hasClaudeKey ? (
-                    <span className="text-[10px] font-bold text-primary bg-primary/10 border-3 border-double px-2">
-                      [ PERSONAL KEY ]
+                    <span className="text-sm font-bold text-primary">
+                      Personal Key
                     </span>
                   ) : isAdmin ? (
-                    <span className="text-[10px] font-bold text-primary bg-primary/10 border-3 border-double px-2">
-                      [ SYSTEM DEFAULT ]
+                    <span className="text-sm font-bold text-primary">
+                      System Key
                     </span>
                   ) : null}
 
@@ -573,10 +772,9 @@ export default function Me() {
                     <button
                       onClick={handleTestClaude}
                       disabled={isAnyLoading}
-                      className="text-[10px] font-bold text-orange-500 hover:text-orange-500/80 outline-none flex items-center gap-1 uppercase disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="text-sm font-bold border-3 border-double cursor-pointer p-1 text-orange-500 hover:text-orange-500/80 outline-none flex items-center gap-1  disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <Activity className="h-3 w-3" />
-                      {isTestingClaude ? "Pinging..." : "Test Link"}
+                      {isTestingClaude ? "Pinging..." : "Test Key"}
                     </button>
                   )}
 
@@ -584,7 +782,7 @@ export default function Me() {
                     <button
                       onClick={() => handleClearApiKey("claude")}
                       disabled={isAnyLoading}
-                      className="text-[10px] font-bold text-destructive hover:underline outline-none uppercase disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
+                      className="text-sm font-bold border-3 border-double cursor-pointer p-1 text-destructive  outline-none  disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline hover:text-destructive/80"
                     >
                       {isUpdatingProfile && updatingTarget === "clear-claude"
                         ? "Clearing..."
@@ -603,7 +801,7 @@ export default function Me() {
                       ? "Enter new key to overwrite existing..."
                       : "sk-ant-..."
                   }
-                  className="border-3 border-double rounded-none text-xs pr-10 border-orange-500/50 focus-visible:ring-orange-500"
+                  className="border-3 border-double rounded-none text-sm pr-10 border-orange-500/50 focus-visible:ring-orange-500"
                   disabled={isAnyLoading}
                 />
                 <button
@@ -642,9 +840,9 @@ export default function Me() {
             <Button
               onClick={handleUpdateApiKeys}
               disabled={isAnyLoading}
+              variant="outline"
               className="border-3 border-double rounded-none w-full sm:w-fit gap-1 mt-1"
             >
-              <Server className="h-4 w-4" />
               <span>
                 {isUpdatingProfile && updatingTarget === "keys"
                   ? "Encrypting..."
@@ -652,10 +850,14 @@ export default function Me() {
               </span>
             </Button>
 
+            {/* EXPLICIT ERROR SUMMARY DIV FOR API KEYS */}
             {apiKeyFormError && (
-              <p className="text-xs text-destructive font-bold mt-1">
-                {apiKeyFormError}
-              </p>
+              <div className="border-3 border-double border-destructive bg-destructive/10 p-3 mt-1">
+                <p className="text-sm text-destructive font-bold flex items-center gap-2">
+                  <ShieldAlert className="h-4 w-4 shrink-0" />
+                  <span>{apiKeyFormError}</span>
+                </p>
+              </div>
             )}
           </div>
         </div>
@@ -666,7 +868,7 @@ export default function Me() {
           <CornerFlourish className="-bottom-1 -right-1 rotate-180" />
 
           <div className="flex gap-1 items-center text-primary">
-            <h4 className="bg-primary text-primary-foreground font-bold p-1 w-fit text-sm">
+            <h4 className="bg-primary text-primary-foreground font-bold p-1 w-fit ">
               {isEditingOther ? "Reset Target Password" : "Change Password"}
             </h4>
           </div>
@@ -674,7 +876,7 @@ export default function Me() {
           <div className="border-l-3 border-double pl-3 flex flex-col gap-3">
             {!isEditingOther && (
               <div className="flex flex-col gap-1">
-                <label className="text-xs font-bold text-primary">
+                <label className="text-sm font-bold text-primary">
                   Current Password
                 </label>
                 <div className="relative">
@@ -683,7 +885,7 @@ export default function Me() {
                     value={currentPassword}
                     onChange={(e) => setCurrentPassword(e.target.value)}
                     placeholder="Enter current password"
-                    className="border-3 border-double rounded-none text-xs pr-10"
+                    className="border-3 border-double rounded-none text-sm pr-10"
                     disabled={isAnyLoading}
                   />
                   <button
@@ -701,7 +903,7 @@ export default function Me() {
                   </button>
                 </div>
                 {fieldErrors.currentPassword && (
-                  <p className="text-xs text-destructive font-bold">
+                  <p className="text-sm text-destructive font-bold">
                     {fieldErrors.currentPassword}
                   </p>
                 )}
@@ -709,8 +911,22 @@ export default function Me() {
             )}
 
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-bold text-primary">
-                {isEditingOther ? "New System Password" : "New Password"}
+              {/* CHANGED: Added flex justify-between to accommodate the new character counter span */}
+              <label className="text-sm font-bold text-primary flex justify-between items-center">
+                <span>
+                  {isEditingOther ? "New System Password" : "New Password"}
+                </span>
+                {/* CHANGED: Added dynamic character length tracker */}
+                <span
+                  className={cn(
+                    "text-sm",
+                    newPassword.length > 50
+                      ? "text-destructive"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  {newPassword.length}/50
+                </span>
               </label>
               <div className="relative">
                 <Input
@@ -718,7 +934,7 @@ export default function Me() {
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder="Min. 6 characters"
-                  className="border-3 border-double rounded-none text-xs pr-10"
+                  className="border-3 border-double rounded-none text-sm pr-10"
                   disabled={isAnyLoading}
                 />
                 <button
@@ -736,14 +952,14 @@ export default function Me() {
                 </button>
               </div>
               {fieldErrors.newPassword && (
-                <p className="text-xs text-destructive font-bold">
+                <p className="text-sm text-destructive font-bold">
                   {fieldErrors.newPassword}
                 </p>
               )}
             </div>
 
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-bold text-primary">
+              <label className="text-sm font-bold text-primary">
                 Confirm New Password
               </label>
               <Input
@@ -751,11 +967,11 @@ export default function Me() {
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="Repeat new password"
-                className="border-3 border-double rounded-none text-xs"
+                className="border-3 border-double rounded-none text-sm"
                 disabled={isAnyLoading}
               />
               {fieldErrors.confirmPassword && (
-                <p className="text-xs text-destructive font-bold">
+                <p className="text-sm text-destructive font-bold">
                   {fieldErrors.confirmPassword}
                 </p>
               )}
@@ -764,9 +980,9 @@ export default function Me() {
             <Button
               onClick={handleUpdatePassword}
               disabled={isAnyLoading}
-              className="border-3 border-double rounded-none w-full sm:w-fit gap-1"
+              className="border-3 border-double rounded-none w-full sm:w-fit gap-1 mt-2"
+              variant="outline"
             >
-              <Key className="h-4 w-4" />
               <span>
                 {isChangingPassword
                   ? "Updating..."
@@ -776,10 +992,14 @@ export default function Me() {
               </span>
             </Button>
 
+            {/* EXPLICIT ERROR SUMMARY DIV FOR PASSWORD */}
             {passwordFormError && (
-              <p className="text-xs text-destructive font-bold">
-                {passwordFormError}
-              </p>
+              <div className="border-3 border-double border-destructive bg-destructive/10 p-3 mt-1">
+                <p className="text-sm text-destructive font-bold flex items-center gap-2">
+                  <ShieldAlert className="h-4 w-4 shrink-0" />
+                  <span>{passwordFormError}</span>
+                </p>
+              </div>
             )}
           </div>
         </div>
@@ -792,11 +1012,11 @@ export default function Me() {
           <CornerFlourish className="-bottom-1 -right-1 rotate-180 text-destructive" />
 
           <div className="flex gap-1 items-center text-destructive">
-            <h4 className=" font-bold p-1 w-fit text-xs">Danger Zone</h4>
+            <h4 className=" font-bold p-1 w-fit ">Danger Zone</h4>
           </div>
 
           <div className="border-l-3 border-double border-destructive pl-3 flex flex-col gap-3">
-            <p className="text-xs">
+            <p className="text-sm">
               {isEditingOther
                 ? "Permanently purge this user account from the system."
                 : "Permanently remove your identity or end the session."}
@@ -827,15 +1047,16 @@ export default function Me() {
                 </span>
               </Button>
             ) : (
-              <div className="flex flex-col gap-3 p-3 border-3 border-double border-destructive">
-                <p className="text-xs font-bold text-destructive">
+              <div className="flex flex-col gap-3 p-3 border-3 border-double border-destructive mt-2">
+                <p className="text-sm font-bold text-destructive flex items-center gap-2">
+                  <ShieldAlert className="h-4 w-4 shrink-0" />
                   Are you sure? This action cannot be undone.
                 </p>
                 <div className="flex gap-3">
                   <Button
                     onClick={handleDeleteUser}
                     disabled={isAnyLoading}
-                    className="border-3 border-double rounded-none bg-destructive text-destructive-foreground gap-1 flex-1 disabled:opacity-50"
+                    className="border-3 border-double rounded-none bg-destructive text-destructive-foreground gap-1 flex-1 disabled:opacity-50 hover:bg-destructive/80"
                   >
                     <Trash2 className="h-4 w-4" />
                     <span>
@@ -850,7 +1071,7 @@ export default function Me() {
                     onClick={() => setShowDeleteConfirm(false)}
                     variant="outline"
                     disabled={isAnyLoading}
-                    className="border-3 border-double rounded-none disabled:opacity-50"
+                    className="border-3 border-double rounded-none disabled:opacity-50 text-destructive border-destructive hover:bg-destructive/10"
                   >
                     Cancel
                   </Button>

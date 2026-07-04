@@ -18,7 +18,7 @@ export default function TermsOfService() {
           Terms of Service
         </h1>
         <div className="border-l-3 border-double pl-3">
-          <p className="text-sm font-bold">Last updated: May 2026</p>
+          <p className=" font-bold">Last updated: May 2026</p>
         </div>
       </div>
 
@@ -32,9 +32,9 @@ export default function TermsOfService() {
         </h4>
 
         <div className="border-l-3 border-double pl-3">
-          <p className="text-xs">
+          <p className="text-sm">
             By accessing this website, you agree to these terms. If you don't
-            agree, that's fine — just close the tab. No hard feelings.
+            agree, that's fine just close the tab. No hard feelings.
           </p>
         </div>
       </div>
@@ -50,8 +50,8 @@ export default function TermsOfService() {
 
         <div className="border-l-3 border-double pl-3 flex flex-col gap-3">
           <div className="flex flex-col gap-1">
-            <span className="text-primary font-bold text-xs">My Content</span>
-            <p className="text-xs">
+            <span className="text-primary font-bold text-sm">My Content</span>
+            <p className="text-sm">
               All articles, code snippets, and project descriptions are my own
               work unless stated otherwise. You can reference them with credit.
               Don't claim them as yours.
@@ -59,8 +59,8 @@ export default function TermsOfService() {
           </div>
 
           <div className="flex flex-col gap-1">
-            <span className="text-primary font-bold text-xs">Your Content</span>
-            <p className="text-xs">
+            <span className="text-primary font-bold text-sm">Your Content</span>
+            <p className="text-sm">
               This site doesn't accept user submissions, comments, or uploads.
               There's nowhere for you to post content. That simplifies things.
             </p>
@@ -78,7 +78,7 @@ export default function TermsOfService() {
         </h4>
 
         <div className="border-l-3 border-double pl-3">
-          <p className="text-xs">
+          <p className="text-sm">
             I write about things I'm learning. Some information might be
             incomplete or become outdated. I'm not responsible for what you do
             with code from this site. Test things yourself. That's what
@@ -97,7 +97,7 @@ export default function TermsOfService() {
         </h4>
 
         <div className="border-l-3 border-double pl-3">
-          <p className="text-xs">
+          <p className="text-sm">
             I may update these terms occasionally. The date at the top tells you
             when they were last changed. Continued use means you accept the
             updates.
@@ -115,7 +115,7 @@ export default function TermsOfService() {
         </h4>
 
         <div className="border-l-3 border-double pl-3">
-          <p className="text-xs">
+          <p className="text-sm">
             Questions about these terms?{" "}
             <Link href="/contact" className="underline text-primary font-bold">
               Contact me
@@ -131,7 +131,7 @@ export default function TermsOfService() {
         variant="outline"
         className="border-3 border-double rounded-none w-full sm:w-fit"
       >
-        <Link href="/">← Back Home</Link>
+        <Link href="/"> Back Home</Link>
       </Button>
     </section>
   );

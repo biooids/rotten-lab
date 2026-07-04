@@ -81,7 +81,7 @@ export default function AdminDashboard() {
             <h4 className="bg-primary text-primary-foreground font-bold p-1 w-fit">
               System Administration
             </h4>
-            <p className="border-l-3 border-double pl-3 text-xs font-bold">
+            <p className="border-l-3 border-double pl-3  font-bold">
               Global user directory, network security, and access matrix.
             </p>
           </header>

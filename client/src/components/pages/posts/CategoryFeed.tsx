@@ -1,19 +1,18 @@
-// src/components/pages/posts/AllPosts.tsx
+// src/components/pages/posts/CategoryFeed.tsx
 "use client";
 
 import React, { useMemo, useCallback } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import PostCard from "@/components/pages/posts/PostCard";
+import PostCard from "./PostCard";
 import CornerFlourish from "@/components/shared/CornerFlourish";
+import FilterSection from "./FilterSection";
 import {
-  useGetPostsQuery,
-  useSearchPostsQuery,
   useFilterByCategoryQuery,
+  useSearchPostsQuery,
   useFilterByTagQuery,
   useSortPostsQuery,
   useGetAllTagsQuery,
 } from "@/lib/features/posts/postsApiSlice";
-import FilterSection from "./FilterSection";
 
 const CardSkeleton = () => (
   <div className="border-3 border-double bg-card flex flex-col gap-3 p-3 justify-between animate-pulse">
@@ -46,52 +45,55 @@ const CardSkeleton = () => (
   </div>
 );
 
-export default function AllPosts() {
+const EmptyState = () => (
+  <div className="p-3 border-3 border-double text-center flex flex-col gap-3 items-center">
+    <p className="text-sm font-bold">No posts found matching your search.</p>
+    <p className="text-xs font-bold">
+      Try different keywords or clear the filters.
+    </p>
+  </div>
+);
+
+interface CategoryFeedProps {
+  category: "bio-engineering" | "computer-science" | "diary";
+  title: string;
+  description: string;
+}
+
+export default function CategoryFeed({
+  category,
+  title,
+  description,
+}: CategoryFeedProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
   // --- READ EXPLICITLY FROM URL ---
+  const page = parseInt(searchParams.get("page") || "1", 10);
   const searchQuery = searchParams.get("q") || "";
-  const activeCategory = searchParams.get("category") || "all";
-  const activeSubcategory = searchParams.get("subcategory") || null;
 
   // MULTI-TAG FIX: Read as string, parse as array
   const activeTagsString = searchParams.get("tag") || "";
-  const activeTagsArray = useMemo(
+  const selectedTags = useMemo(
     () => (activeTagsString ? activeTagsString.split(",") : []),
     [activeTagsString],
   );
 
   const sortBy = (searchParams.get("sortBy") as "date" | "title") || "date";
   const sortOrder = (searchParams.get("sortOrder") as "ASC" | "DESC") || "DESC";
-  const page = parseInt(searchParams.get("page") || "1", 10);
 
   // --- EXPLICIT URL UPDATER ---
   const updateURL = useCallback(
     (key: string, value: string | null, resetPage: boolean = true) => {
       const params = new URLSearchParams(searchParams.toString());
-
       if (value) params.set(key, value);
       else params.delete(key);
 
       if (resetPage) params.set("page", "1");
 
-      // Replicate previous intent-based clearing logic
-      if (key === "q" && value) {
-        params.delete("category");
-        params.delete("subcategory");
-        params.delete("tag");
-      }
-      if (key === "category" && value) {
-        params.delete("q");
-        params.delete("tag");
-      }
-      if (key === "tag" && value) {
-        params.delete("q");
-        params.delete("category");
-        params.delete("subcategory");
-      }
+      if (key === "q" && value) params.delete("tag");
+      if (key === "tag" && value) params.delete("q");
 
       router.push(`${pathname}?${params.toString()}`, { scroll: false });
     },
@@ -99,15 +101,9 @@ export default function AllPosts() {
   );
 
   // --- HANDLERS ---
-  const handleSearch = useCallback(
-    (value: string) => updateURL("q", value),
-    [updateURL],
-  );
-
-  // MULTI-TAG FIX: Toggle logic for arrays
-  const handleToggleTag = useCallback(
+  const toggleTag = useCallback(
     (tag: string) => {
-      let newTags = [...activeTagsArray];
+      let newTags = [...selectedTags];
       if (newTags.includes(tag)) {
         newTags = newTags.filter((t) => t !== tag);
       } else {
@@ -115,70 +111,43 @@ export default function AllPosts() {
       }
       updateURL("tag", newTags.length > 0 ? newTags.join(",") : null);
     },
-    [updateURL, activeTagsArray],
+    [selectedTags, updateURL],
   );
 
-  const handleSetSubcategory = useCallback(
-    (sub: string) => updateURL("subcategory", sub),
+  const handleSetSearchQuery = useCallback(
+    (val: string) => updateURL("q", val),
     [updateURL],
   );
 
-  const handleSetSortBy = useCallback(
+  const setSortBy = useCallback(
     (val: "date" | "title") => updateURL("sortBy", val, false),
     [updateURL],
   );
 
-  const handleSetSortOrder = useCallback(
+  const setSortOrder = useCallback(
     (val: "ASC" | "DESC") => updateURL("sortOrder", val, false),
     [updateURL],
   );
 
-  const handleSetCategory = useCallback(
-    (cat: string) => {
-      const params = new URLSearchParams(searchParams.toString());
-      if (cat === "all" || !cat) params.delete("category");
-      else params.set("category", cat);
-      params.delete("subcategory");
-      params.delete("q");
-      params.delete("tag");
-      params.set("page", "1");
-      router.push(`${pathname}?${params.toString()}`, { scroll: false });
-    },
-    [searchParams, pathname, router],
-  );
-
-  const handleClearFilters = useCallback(() => {
-    router.push(pathname, { scroll: false });
-  }, [pathname, router]);
-
   // --- DYNAMIC QUERY RESOLUTION ---
   const isSearch = Boolean(searchQuery);
-  const isTag = activeTagsArray.length > 0;
-  const isCategory = activeCategory !== "all";
+  const isTag = selectedTags.length > 0;
   const isSort = sortBy !== "date" || sortOrder !== "DESC";
 
   const {
-    data: allData,
-    isLoading: loadingAll,
-    isFetching: fetchingAll,
-  } = useGetPostsQuery(page, {
-    skip: isSearch || isTag || isCategory || isSort,
-  });
+    data: catData,
+    isLoading: loadingCat,
+    isFetching: fetchingCat,
+  } = useFilterByCategoryQuery(
+    { cat: category, page },
+    { skip: isSearch || isTag || isSort },
+  );
 
   const {
     data: searchData,
     isLoading: loadingSearch,
     isFetching: fetchingSearch,
   } = useSearchPostsQuery({ q: searchQuery, page }, { skip: !isSearch });
-
-  const {
-    data: categoryData,
-    isLoading: loadingCategory,
-    isFetching: fetchingCategory,
-  } = useFilterByCategoryQuery(
-    { cat: activeCategory, sub: activeSubcategory || undefined, page },
-    { skip: !isCategory },
-  );
 
   const {
     data: tagData,
@@ -192,34 +161,25 @@ export default function AllPosts() {
     isFetching: fetchingSort,
   } = useSortPostsQuery(
     { by: sortBy, order: sortOrder, page },
-    { skip: !isSort || isSearch || isTag || isCategory },
+    { skip: !isSort || isSearch || isTag },
   );
   const { data: globalTagsData } = useGetAllTagsQuery();
-  let activeData = allData;
-  let isLoading = loadingAll || fetchingAll;
+  let activeData = catData;
+  let isPageLoading = loadingCat || fetchingCat;
 
   if (isSearch) {
     activeData = searchData;
-    isLoading = loadingSearch || fetchingSearch;
+    isPageLoading = loadingSearch || fetchingSearch;
   } else if (isTag) {
     activeData = tagData;
-    isLoading = loadingTag || fetchingTag;
-  } else if (isCategory) {
-    activeData = categoryData;
-    isLoading = loadingCategory || fetchingCategory;
+    isPageLoading = loadingTag || fetchingTag;
   } else if (isSort) {
     activeData = sortData;
-    isLoading = loadingSort || fetchingSort;
+    isPageLoading = loadingSort || fetchingSort;
   }
 
-  const posts = activeData?.posts || [];
+  const filteredPosts = activeData?.posts || [];
 
-  const allCategories = [
-    "bio-engineering",
-    "computer-science",
-    "diary",
-    "projects",
-  ];
   const allAvailableTags = globalTagsData?.tags || [];
 
   return (
@@ -230,47 +190,45 @@ export default function AllPosts() {
         <CornerFlourish className="-bottom-1 -left-1 -rotate-90" />
         <CornerFlourish className="-bottom-1 -right-1 rotate-180" />
 
-        <h4 className="bg-primary text-primary-foreground font-bold p-1 w-fit">
-          All Posts :
-        </h4>
-        <p className="border-l-3 border-double pl-3">
-          Every article and projects across all rooms.
+        <div className=" text-primary">
+          <h4 className="bg-primary text-primary-foreground font-bold p-1 w-fit">
+            {title}
+          </h4>
+        </div>
+        <p className="border-l-3 border-double pl-3 text-xs font-bold">
+          {description}
         </p>
       </header>
 
       <FilterSection
         searchQuery={searchQuery}
-        setSearchQuery={handleSearch}
-        selectedTags={activeTagsArray}
-        toggleTag={handleToggleTag}
+        setSearchQuery={handleSetSearchQuery}
+        selectedTags={selectedTags}
+        toggleTag={toggleTag}
         allAvailableTags={allAvailableTags}
-        allCategories={allCategories}
-        selectedCategory={activeCategory === "all" ? "" : activeCategory}
-        setSelectedCategory={handleSetCategory}
-        showCategoryFilter={true}
-        showSubcategoryFilter={true}
-        selectedSubcategory={activeSubcategory || ""}
-        setSelectedSubcategory={handleSetSubcategory}
         sortBy={sortBy}
-        setSortBy={handleSetSortBy}
+        setSortBy={setSortBy}
         sortOrder={sortOrder}
-        setSortOrder={handleSetSortOrder}
-        clearAllFilters={handleClearFilters}
+        setSortOrder={setSortOrder}
+        clearAllFilters={() => router.push(pathname, { scroll: false })}
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-        {isLoading
-          ? Array.from({ length: 6 }).map((_, i) => <CardSkeleton key={i} />)
-          : posts.map((post) => <PostCard key={post.id} post={post} />)}
-      </div>
-
-      {!isLoading && posts.length === 0 && (
-        <div className="p-3 border-3 border-double text-center flex flex-col gap-3 items-center">
-          <p className="text-sm font-bold">
-            No posts found matching your search criteria.
-          </p>
+      {!isPageLoading && (
+        <div className="flex justify-between items-center">
+          <span className="text-xs font-bold border-3 border-double px-2 py-1">
+            {filteredPosts.length}{" "}
+            {filteredPosts.length === 1 ? "post" : "posts"}
+          </span>
         </div>
       )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+        {isPageLoading
+          ? Array.from({ length: 6 }).map((_, i) => <CardSkeleton key={i} />)
+          : filteredPosts.map((post) => <PostCard key={post.id} post={post} />)}
+      </div>
+
+      {!isPageLoading && filteredPosts.length === 0 && <EmptyState />}
 
       {activeData && activeData.totalPages > 1 && (
         <div className="flex items-center justify-between border-3 border-double p-3 mt-4">
@@ -280,7 +238,7 @@ export default function AllPosts() {
           </p>
           <div className="flex gap-2">
             <button
-              disabled={page === 1 || isLoading}
+              disabled={page === 1 || isPageLoading}
               onClick={() =>
                 updateURL("page", String(Math.max(1, page - 1)), false)
               }
@@ -289,7 +247,7 @@ export default function AllPosts() {
               Prev
             </button>
             <button
-              disabled={page === activeData.totalPages || isLoading}
+              disabled={page === activeData.totalPages || isPageLoading}
               onClick={() => updateURL("page", String(page + 1), false)}
               className="border-3 border-double px-3 py-1 text-xs font-bold hover:bg-primary hover:text-primary-foreground disabled:opacity-50 transition-colors"
             >

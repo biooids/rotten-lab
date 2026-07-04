@@ -109,6 +109,11 @@ export const postsApiSlice = createApi({
       query: (page = 1) => `/posts/superadmin-diary?page=${page}`,
       providesTags: ["Post"],
     }),
+
+    getAllTags: builder.query<{ tags: string[] }, void>({
+      query: () => `/posts/tags`,
+      providesTags: ["Post"],
+    }),
   }),
 });
 
@@ -126,4 +131,5 @@ export const {
   useGetMyPostsQuery,
   useGetSuperAdminSeriousProjectsQuery,
   useGetSuperAdminDiaryQuery,
+  useGetAllTagsQuery,
 } = postsApiSlice;

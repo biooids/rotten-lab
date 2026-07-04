@@ -14,6 +14,7 @@ import type {
   User,
   JWTPayload,
 } from "./auth.types.js";
+import { mediaStorage } from "../../db/cloudinary.js";
 
 // --- ENVIRONMENT VALIDATION ---
 const ACCESS_TOKEN_SECRET = process.env["ACCESS_TOKEN_SECRET"];
@@ -186,10 +187,16 @@ export const authController = {
       res.end(
         JSON.stringify({
           message: "User created",
+          // CHANGED: Added profile_title, avatar_url, hasGeminiKey, and hasClaudeKey defaults
+          // to the response so Redux is properly populated on signup.
           user: {
             id: newUser.id,
             username: newUser.username,
             role: newUser.role,
+            profile_title: null,
+            avatar_url: null,
+            hasGeminiKey: false,
+            hasClaudeKey: false,
           },
           accessToken,
         }),
@@ -417,6 +424,21 @@ export const authController = {
         return;
       }
 
+      // CHANGED: Explicitly fetching the full user profile by ID here because findUserByUsername
+      // might not include profile_title, avatar_url, and the decrypted API keys. We wrap it
+      // in a try/catch to log any potential errors without crashing the login flow completely.
+      let fullUser = user;
+      try {
+        const fullUserResult = await authService.findUserById(user.id);
+        if (fullUserResult.rows.length > 0) {
+          fullUser = fullUserResult.rows[0] as User;
+        }
+      } catch (fetchErr) {
+        process.stderr.write(
+          `[login] DB Error fetching full user profile for Redux state: ${(fetchErr as Error).message}\nStack: ${(fetchErr as Error).stack}\n`,
+        );
+      }
+
       // --- TOKEN GENERATION ---
       const rawRefreshToken = crypto.randomBytes(64).toString("hex");
       const hashedRefreshToken = crypto
@@ -473,7 +495,16 @@ export const authController = {
       res.end(
         JSON.stringify({
           accessToken,
-          user: { id: user.id, username: user.username, role: user.role },
+          // CHANGED: Added the full profile fields to the JSON response so the frontend Me component doesn't wipe out user data.
+          user: {
+            id: fullUser.id,
+            username: fullUser.username,
+            role: fullUser.role,
+            profile_title: fullUser.profile_title || null,
+            avatar_url: fullUser.avatar_url || null,
+            hasGeminiKey: !!fullUser.gemini_api_key,
+            hasClaudeKey: !!fullUser.claude_api_key,
+          },
         }),
       );
       return;
@@ -651,7 +682,17 @@ export const authController = {
       res.end(
         JSON.stringify({
           accessToken,
-          user: { id: user.id, username: user.username, role: user.role },
+          // CHANGED: Added profile_title, avatar_url, hasGeminiKey, and hasClaudeKey to the refresh payload.
+          // This is the exact fix for the "data disappears on reload" bug.
+          user: {
+            id: user.id,
+            username: user.username,
+            role: user.role,
+            profile_title: user.profile_title || null,
+            avatar_url: user.avatar_url || null,
+            hasGeminiKey: !!user.gemini_api_key,
+            hasClaudeKey: !!user.claude_api_key,
+          },
         }),
       );
       return;
@@ -856,8 +897,6 @@ export const authController = {
       ) as JWTPayload;
       if (decoded.token_use !== "access") throw new Error("Invalid token type");
     } catch (err) {
-      // Distinguish expired vs invalid so the frontend baseQuery can decide between
-      // a silent refresh attempt and a hard logout.
       const jwtErrName = (err as Error)?.name;
       const jwtErrMsg = (err as Error)?.message || "";
       const isExpired = jwtErrName === "TokenExpiredError";
@@ -908,20 +947,145 @@ export const authController = {
     }
 
     try {
-      const { username, geminiApiKey, claudeApiKey } = body;
+      const {
+        username,
+        profileTitle,
+        avatarBase64,
+        avatarUrl,
+        geminiApiKey,
+        claudeApiKey,
+      } = body;
 
-      // 1. Manually update username if provided
-      if (username) {
-        if (username.length < 3 || username.length > 20) {
+      // --- REGEX DEFINITIONS (Matching Zod Schema) ---
+      const imageExtensions = /\.(jpeg|jpg|gif|png|webp|svg)(\?.*)?(#.*)?$/i;
+      const base64ImageRegex =
+        /^data:image\/(jpeg|jpg|png|webp|gif|svg\+xml);base64,/;
+
+      // --- EXPLICIT NODE.JS VALIDATION FOR NEW FIELDS ---
+
+      // 1. Username Validation
+      if (username !== undefined && username !== null) {
+        const trimmedUser = username.trim();
+        if (trimmedUser.length < 3 || trimmedUser.length > 20) {
           res.statusCode = 400;
           res.end(
             JSON.stringify({ error: "Username must be 3-20 characters." }),
           );
           return;
         }
+      }
+
+      // 2. Profile Title Validation
+      if (profileTitle !== undefined && profileTitle !== null) {
+        if (profileTitle.length > 100) {
+          res.statusCode = 400;
+          res.end(
+            JSON.stringify({
+              error: "Profile title cannot exceed 100 characters.",
+            }),
+          );
+          return;
+        }
+      }
+
+      // 3. Avatar Base64 Format Validation
+      if (
+        avatarBase64 !== undefined &&
+        avatarBase64 !== null &&
+        avatarBase64 !== ""
+      ) {
+        if (!base64ImageRegex.test(avatarBase64)) {
+          res.statusCode = 400;
+          res.end(
+            JSON.stringify({
+              error:
+                "Invalid base64 image format. Only image uploads are allowed.",
+            }),
+          );
+          return;
+        }
+      }
+
+      // 4. Avatar URL Strict Validation (Length + URL + Extension)
+      if (avatarUrl !== undefined && avatarUrl !== null && avatarUrl !== "") {
+        const trimmedUrl = avatarUrl.trim();
+
+        if (trimmedUrl.length > 2048) {
+          res.statusCode = 400;
+          res.end(
+            JSON.stringify({
+              error: "Avatar URL cannot exceed 2048 characters.",
+            }),
+          );
+          return;
+        }
 
         try {
-          await authService.updateUser(username, targetId);
+          new URL(trimmedUrl); // Native Node.js check for valid URL structure
+        } catch {
+          res.statusCode = 400;
+          res.end(
+            JSON.stringify({
+              error: "Please enter a properly formatted URL.",
+            }),
+          );
+          return;
+        }
+
+        if (!imageExtensions.test(trimmedUrl)) {
+          res.statusCode = 400;
+          res.end(
+            JSON.stringify({
+              error:
+                "Please enter a valid image URL ending in .jpg, .png, .gif, etc.",
+            }),
+          );
+          return;
+        }
+      }
+
+      // --- Cloudinary Upload Logic ---
+      let finalAvatarUrl: string | null = null;
+
+      if (avatarBase64) {
+        try {
+          const uploadResult = await mediaStorage.uploader.upload(
+            avatarBase64,
+            {
+              folder: "portfolio",
+            },
+          );
+          finalAvatarUrl = uploadResult.secure_url;
+        } catch (uploadErr) {
+          process.stderr.write(
+            `[updateAccount] Cloudinary Upload FATAL Error: ${(uploadErr as Error).message}\nStack: ${(uploadErr as Error).stack}\n`,
+          );
+          res.statusCode = 500;
+          res.end(
+            JSON.stringify({
+              error:
+                "Failed to upload profile picture to Cloudinary. Please try again.",
+            }),
+          );
+          return;
+        }
+      } else if (avatarUrl) {
+        finalAvatarUrl = avatarUrl.trim();
+      }
+
+      // 5. Manually update core user details if ANY of them are provided
+      if (username || profileTitle !== undefined || finalAvatarUrl !== null) {
+        try {
+          await authService.updateUser(
+            username ? username.trim() : null,
+            profileTitle !== undefined
+              ? profileTitle.trim() === ""
+                ? "Member"
+                : profileTitle.trim()
+              : null,
+            finalAvatarUrl,
+            targetId,
+          );
         } catch (err) {
           const pgCode = (err as any)?.code;
           const pgConstraint = (err as any)?.constraint || "";
@@ -943,26 +1107,26 @@ export const authController = {
           }
 
           process.stderr.write(
-            `[updateAccount] DB/Logic Error updating username code=${pgCode || "n/a"} constraint=${pgConstraint || "n/a"}: ${(err as Error).message}\nStack: ${(err as Error).stack}\n`,
+            `[updateAccount] DB/Logic Error updating user info code=${pgCode || "n/a"} constraint=${pgConstraint || "n/a"}: ${(err as Error).message}\nStack: ${(err as Error).stack}\n`,
           );
           res.statusCode = 500;
           res.end(
             JSON.stringify({
               error:
-                "Failed to update username due to a server error. Please retry.",
+                "Failed to update profile data due to a server error. Please retry.",
             }),
           );
           return;
         }
       }
 
-      // 2. Manually update API Keys if provided (Allows empty strings to clear the key)
+      // 6. Manually update API Keys if provided
       if (geminiApiKey !== undefined || claudeApiKey !== undefined) {
         try {
           await authService.updateApiKeys(
             targetId,
-            geminiApiKey !== undefined ? geminiApiKey : null,
-            claudeApiKey !== undefined ? claudeApiKey : null,
+            geminiApiKey !== undefined ? geminiApiKey.trim() : null,
+            claudeApiKey !== undefined ? claudeApiKey.trim() : null,
           );
         } catch (err) {
           process.stderr.write(
@@ -979,7 +1143,7 @@ export const authController = {
         }
       }
 
-      // 3. Fetch the fresh user data to return
+      // 7. Fetch the fresh user data to return back to Redux
       try {
         const updatedUserResult = await authService.findUserById(targetId);
 
@@ -991,10 +1155,11 @@ export const authController = {
 
         const user = updatedUserResult.rows[0];
 
-        // DO NOT send raw keys back to the client. Send boolean flags instead.
         const safeUser = {
           id: user.id,
           username: user.username,
+          profile_title: user.profile_title,
+          avatar_url: user.avatar_url,
           role: user.role,
           hasGeminiKey: !!user.gemini_api_key,
           hasClaudeKey: !!user.claude_api_key,
@@ -1035,7 +1200,6 @@ export const authController = {
       );
     }
   },
-
   async deleteAccount(
     req: IncomingMessage,
     res: ServerResponse,

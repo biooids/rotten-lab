@@ -1,4 +1,4 @@
-// src/components/pages/posts/PostCard.tsx
+//src/components/pages/posts/PostCard.tsx
 "use client";
 
 import React, { useEffect, useState } from "react";
@@ -7,6 +7,7 @@ import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import CornerFlourish from "../../shared/CornerFlourish";
+import { formatDistanceToNow } from "date-fns";
 
 const SmartImage = ({
   src,
@@ -82,12 +83,14 @@ export default function PostCard({ post }: { post: any }) {
   const visibleTags = post.tags?.slice(0, 3) || [];
   const remainingTags = (post.tags?.length || 0) - 3;
 
-  const AUTHOR_NAME = "protocols_farmer";
+  // FIXED: Safely bypass TS constraints and map exactly to the backend SQL aliases
+  const AUTHOR_NAME = (post as any)?.author_name || "protocols_farmer";
   const AUTHOR_AVATAR =
+    (post as any)?.author_avatar ||
     "https://res.cloudinary.com/dhr9zmb3i/image/upload/v1772941590/cat_kw8xmu.jpg";
 
   return (
-    <div className="relative border-3 border-double bg-card flex flex-col gap-3 p-3 justify-between ">
+    <div className="relative border-3 border-double  flex flex-col gap-3 p-3 justify-between ">
       <CornerFlourish className="-top-1 -left-1" />
       <CornerFlourish className="-top-1 -right-1 rotate-90" />
       <CornerFlourish className="-bottom-1 -left-1 -rotate-90" />
@@ -137,8 +140,14 @@ export default function PostCard({ post }: { post: any }) {
           <div className="flex flex-col">
             <p className="text-primary font-bold">{AUTHOR_NAME}</p>
             <p className="text-xs opacity-80 font-bold">
-              C: {new Date(post.created_at).toLocaleDateString()} | E:{" "}
-              {new Date(post.updated_at).toLocaleDateString()}
+              C:{" "}
+              {formatDistanceToNow(new Date(post.created_at), {
+                addSuffix: true,
+              })}{" "}
+              | E:{" "}
+              {formatDistanceToNow(new Date(post.updated_at), {
+                addSuffix: true,
+              })}
             </p>
           </div>
         </div>

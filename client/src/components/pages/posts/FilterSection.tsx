@@ -22,6 +22,7 @@ interface FilterSectionProps {
   setSortBy?: (value: "date" | "title") => void;
   sortOrder?: "ASC" | "DESC";
   setSortOrder?: (value: "ASC" | "DESC") => void;
+  clearAllFilters?: () => void;
 }
 
 export default function FilterSection({
@@ -41,15 +42,17 @@ export default function FilterSection({
   setSortBy,
   sortOrder = "DESC",
   setSortOrder,
+  clearAllFilters,
 }: FilterSectionProps) {
   const [localSearch, setLocalSearch] = useState(searchQuery);
 
   useEffect(() => {
     const handler = setTimeout(() => {
+      if (localSearch === searchQuery) return;
       setSearchQuery(localSearch);
     }, 400);
     return () => clearTimeout(handler);
-  }, [localSearch, setSearchQuery]);
+  }, [localSearch, setSearchQuery, searchQuery]);
 
   useEffect(() => {
     setLocalSearch(searchQuery);
@@ -65,11 +68,15 @@ export default function FilterSection({
 
   const clearAll = () => {
     setLocalSearch("");
-    setSearchQuery("");
-    if (setSelectedCategory) setSelectedCategory("");
-    if (setSelectedSubcategory) setSelectedSubcategory("");
-    if (setSortBy) setSortBy("date");
-    if (setSortOrder) setSortOrder("DESC");
+    if (clearAllFilters) {
+      clearAllFilters();
+    } else {
+      setSearchQuery("");
+      if (setSelectedCategory) setSelectedCategory("");
+      if (setSelectedSubcategory) setSelectedSubcategory("");
+      if (setSortBy) setSortBy("date");
+      if (setSortOrder) setSortOrder("DESC");
+    }
   };
 
   return (

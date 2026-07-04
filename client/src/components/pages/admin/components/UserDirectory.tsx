@@ -78,7 +78,9 @@ export default function UserDirectory({ currentUserId, showToast }: Props) {
         <CornerFlourish className="-top-1 -right-1 rotate-90" />
         <CornerFlourish className="-bottom-1 -left-1 -rotate-90" />
         <CornerFlourish className="-bottom-1 -right-1 rotate-180" />
-
+        <div className="flex gap-3 items-center border-b-3 border-double pb-3 ">
+          <h4 className="text-sm font-bold text-primary">User Directory</h4>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>

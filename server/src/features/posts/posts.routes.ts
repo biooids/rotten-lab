@@ -85,5 +85,10 @@ export const postsRoutes = async ({
     return true;
   }
 
+  if (action === "tags" && req.method === "GET") {
+    await postsController.getTags(req, res);
+    return true;
+  }
+
   return false;
 };

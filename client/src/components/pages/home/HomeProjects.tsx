@@ -6,7 +6,6 @@ import { cn } from "@/lib/utils";
 import CornerFlourish from "@/components/shared/CornerFlourish";
 import PostCard from "@/components/pages/posts/PostCard";
 import { useGetSuperAdminSeriousProjectsQuery } from "@/lib/features/posts/postsApiSlice";
-import { FlaskConical } from "lucide-react";
 
 const CardSkeleton = () => (
   <div className="relative border-3 border-double bg-card flex flex-col gap-3 p-3 justify-between h-full animate-pulse">
@@ -67,7 +66,7 @@ export default function HomeProjects() {
         </h4>
       </div>
 
-      <p className="border-l-3 border-double pl-3 text-xs font-bold">
+      <p className="border-l-3 border-double pl-3  font-bold">
         My most serious projects
       </p>
 
