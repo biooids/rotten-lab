@@ -259,24 +259,49 @@ export const postsController = {
     }
   },
 
-  async searchPosts(
+  // --- NEW UNIFIED CONTROLLER METHOD FOR ALL FILTERS ---
+  async getFilteredPosts(
     _req: IncomingMessage,
     res: ServerResponse,
     url: URL,
   ): Promise<void> {
     try {
-      const q = url.searchParams.get("q") || "";
+      // 1. Extract explicit pagination
       const page = parseInt(url.searchParams.get("page") || "1", 10);
       const limit = 12;
 
-      if (!q.trim()) {
-        res.statusCode = 400;
-        res.setHeader("Content-Type", "application/json");
-        res.end(JSON.stringify({ error: "Query required" }));
-        return;
+      // 2. Extract explicit parameters
+      const searchQuery = url.searchParams.get("q") || null;
+      const category = url.searchParams.get("category") || null;
+      const subcategory = url.searchParams.get("subcategory") || null;
+
+      const tagString = url.searchParams.get("tag");
+      let tagsArray: string[] | null = null;
+      if (tagString) {
+        tagsArray = tagString
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean);
       }
 
-      const results = await postsService.searchPosts(q, page, limit);
+      const sortBy = url.searchParams.get("sortBy") || "date";
+      const sortOrder =
+        url.searchParams.get("sortOrder")?.toUpperCase() === "ASC"
+          ? "ASC"
+          : "DESC";
+
+      // 3. Call the unified service method
+      const results = await postsService.getFilteredPosts(
+        page,
+        limit,
+        searchQuery,
+        category,
+        subcategory,
+        tagsArray,
+        sortBy,
+        sortOrder,
+        null, // We are not filtering by author here
+      );
 
       res.statusCode = 200;
       res.setHeader("Content-Type", "application/json");
@@ -290,125 +315,7 @@ export const postsController = {
       );
     } catch (err: any) {
       process.stderr.write(
-        `[searchPosts] ERROR: ${err.message}\nStack: ${err.stack}\n`,
-      );
-      res.statusCode = 500;
-      res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: err.message }));
-    }
-  },
-
-  async filterByTag(
-    _req: IncomingMessage,
-    res: ServerResponse,
-    url: URL,
-  ): Promise<void> {
-    try {
-      const tag = url.searchParams.get("tag");
-      const page = parseInt(url.searchParams.get("page") || "1", 10);
-      const limit = 12;
-
-      if (!tag) {
-        res.statusCode = 400;
-        res.setHeader("Content-Type", "application/json");
-        res.end(JSON.stringify({ error: "Tag required" }));
-        return;
-      }
-
-      const results = await postsService.filterByTag(tag, page, limit);
-
-      res.statusCode = 200;
-      res.setHeader("Content-Type", "application/json");
-      res.end(
-        JSON.stringify({
-          posts: results.rows,
-          total: results.totalCount,
-          page: page,
-          totalPages: Math.ceil(results.totalCount / limit),
-        }),
-      );
-    } catch (err: any) {
-      process.stderr.write(
-        `[filterByTag] ERROR: ${err.message}\nStack: ${err.stack}\n`,
-      );
-      res.statusCode = 500;
-      res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: err.message }));
-    }
-  },
-
-  async filterByCategory(
-    _req: IncomingMessage,
-    res: ServerResponse,
-    url: URL,
-  ): Promise<void> {
-    try {
-      const cat = url.searchParams.get("category");
-      const sub = url.searchParams.get("subcategory");
-      const page = parseInt(url.searchParams.get("page") || "1", 10);
-      const limit = 12;
-
-      if (!cat) {
-        res.statusCode = 400;
-        res.setHeader("Content-Type", "application/json");
-        res.end(JSON.stringify({ error: "Category required" }));
-        return;
-      }
-
-      const results = sub
-        ? await postsService.filterBySubcategory(cat, sub, page, limit)
-        : await postsService.filterByCategory(cat, page, limit);
-
-      res.statusCode = 200;
-      res.setHeader("Content-Type", "application/json");
-      res.end(
-        JSON.stringify({
-          posts: results.rows,
-          total: results.totalCount,
-          page: page,
-          totalPages: Math.ceil(results.totalCount / limit),
-        }),
-      );
-    } catch (err: any) {
-      process.stderr.write(
-        `[filterByCategory] ERROR: ${err.message}\nStack: ${err.stack}\n`,
-      );
-      res.statusCode = 500;
-      res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: err.message }));
-    }
-  },
-
-  async sortPosts(
-    _req: IncomingMessage,
-    res: ServerResponse,
-    url: URL,
-  ): Promise<void> {
-    try {
-      const by = url.searchParams.get("by") || "date";
-      const order =
-        url.searchParams.get("order")?.toUpperCase() === "ASC" ? "ASC" : "DESC";
-      const page = parseInt(url.searchParams.get("page") || "1", 10);
-      const limit = 12;
-
-      const results =
-        by === "title"
-          ? await postsService.sortPostsByTitle(order as any, page, limit)
-          : await postsService.sortPostsByDate(order as any, page, limit);
-
-      res.statusCode = 200;
-      res.setHeader("Content-Type", "application/json");
-      res.end(
-        JSON.stringify({
-          posts: results.rows,
-          total: results.totalCount,
-          page: page,
-          totalPages: Math.ceil(results.totalCount / limit),
-        }),
-      );
-    } catch (err: any) {
-      process.stderr.write(
-        `[sortPosts] ERROR: ${err.message}\nStack: ${err.stack}\n`,
+        `[getFilteredPosts] ERROR: ${err.message}\nStack: ${err.stack}\n`,
       );
       res.statusCode = 500;
       res.setHeader("Content-Type", "application/json");
@@ -962,13 +869,41 @@ export const postsController = {
         return;
       }
 
+      // 1. Extract explicit pagination
       const page = parseInt(url.searchParams.get("page") || "1", 10);
       const limit = 12;
 
-      const results = await postsService.getPostsByAuthor(
-        decoded.id,
+      // 2. Extract explicit parameters exactly like getFilteredPosts
+      const searchQuery = url.searchParams.get("q") || null;
+      const category = url.searchParams.get("category") || null;
+      const subcategory = url.searchParams.get("subcategory") || null;
+
+      const tagString = url.searchParams.get("tag");
+      let tagsArray: string[] | null = null;
+      if (tagString) {
+        tagsArray = tagString
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean);
+      }
+
+      const sortBy = url.searchParams.get("sortBy") || "date";
+      const sortOrder =
+        url.searchParams.get("sortOrder")?.toUpperCase() === "ASC"
+          ? "ASC"
+          : "DESC";
+
+      // 3. Call the unified service method, specifically injecting the decoded.id as the authorId filter
+      const results = await postsService.getFilteredPosts(
         page,
         limit,
+        searchQuery,
+        category,
+        subcategory,
+        tagsArray,
+        sortBy,
+        sortOrder,
+        decoded.id, // Force the author boundary filter
       );
 
       res.statusCode = 200;
@@ -1055,9 +990,14 @@ export const postsController = {
     }
   },
 
-  async getTags(_req: IncomingMessage, res: ServerResponse): Promise<void> {
+  async getTags(
+    _req: IncomingMessage,
+    res: ServerResponse,
+    url: URL,
+  ): Promise<void> {
     try {
-      const tagsList = await postsService.getAllUniqueTags();
+      const category = url.searchParams.get("category") || null;
+      const tagsList = await postsService.getAllUniqueTags(category);
 
       res.statusCode = 200;
       res.setHeader("Content-Type", "application/json");

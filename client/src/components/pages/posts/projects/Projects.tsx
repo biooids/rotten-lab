@@ -7,12 +7,9 @@ import { cn } from "@/lib/utils";
 import PostCard from "../PostCard";
 import CornerFlourish from "@/components/shared/CornerFlourish";
 import FilterSection from "../FilterSection";
-import { Star, Shapes } from "lucide-react";
+import { Star, Shapes, AlertTriangle } from "lucide-react";
 import {
-  useFilterByCategoryQuery,
-  useSearchPostsQuery,
-  useFilterByTagQuery,
-  useSortPostsQuery,
+  useGetFilteredPostsQuery,
   useGetAllTagsQuery,
 } from "@/lib/features/posts/postsApiSlice";
 
@@ -88,9 +85,8 @@ export default function Projects() {
       else params.delete(key);
 
       if (resetPage) params.set("page", "1");
-      if (key === "q" && value) params.delete("tag");
-      if (key === "tag" && value) params.delete("q");
 
+      // Note: Removed the forced deletion of other parameters to allow compound queries
       router.push(`${pathname}?${params.toString()}`, { scroll: false });
     },
     [searchParams, pathname, router],
@@ -134,60 +130,29 @@ export default function Projects() {
     [pathname, router],
   );
 
-  // --- DYNAMIC QUERY RESOLUTION ---
-  const isSearch = Boolean(searchQuery);
-  const isTag = selectedTags.length > 0;
-  const isSort = sortBy !== "date" || sortOrder !== "DESC";
-
+  // --- UNIFIED COMPOUND QUERY ---
   const {
-    data: catData,
-    isLoading: loadingCat,
-    isFetching: fetchingCat,
-  } = useFilterByCategoryQuery(
-    { cat: "projects", sub: activeTab, page },
-    { skip: isSearch || isTag || isSort },
-  );
+    data: activeData,
+    isLoading,
+    isFetching,
+    isError,
+  } = useGetFilteredPostsQuery({
+    page,
+    q: searchQuery || null,
+    category: "projects", // Hardcoded for this route
+    subcategory: activeTab, // Tied to the active tab
+    tag: activeTagsString || null,
+    sortBy,
+    sortOrder,
+  });
 
-  const {
-    data: searchData,
-    isLoading: loadingSearch,
-    isFetching: fetchingSearch,
-  } = useSearchPostsQuery({ q: searchQuery, page }, { skip: !isSearch });
+  // Fetch only tags that exist within the projects category
+  const { data: contextualTagsData } = useGetAllTagsQuery("projects");
 
-  const {
-    data: tagData,
-    isLoading: loadingTag,
-    isFetching: fetchingTag,
-  } = useFilterByTagQuery({ tag: activeTagsString, page }, { skip: !isTag });
-
-  const {
-    data: sortData,
-    isLoading: loadingSort,
-    isFetching: fetchingSort,
-  } = useSortPostsQuery(
-    { by: sortBy, order: sortOrder, page },
-    { skip: !isSort || isSearch || isTag },
-  );
-
-  const { data: globalTagsData } = useGetAllTagsQuery();
-
-  let activeData = catData;
-  let isPageLoading = loadingCat || fetchingCat;
-
-  if (isSearch) {
-    activeData = searchData;
-    isPageLoading = loadingSearch || fetchingSearch;
-  } else if (isTag) {
-    activeData = tagData;
-    isPageLoading = loadingTag || fetchingTag;
-  } else if (isSort) {
-    activeData = sortData;
-    isPageLoading = loadingSort || fetchingSort;
-  }
-
+  const isPageLoading = isLoading || isFetching;
   const filteredPosts = activeData?.posts || [];
+  const allAvailableTags = contextualTagsData?.tags || [];
 
-  const allAvailableTags = globalTagsData?.tags || [];
   return (
     <section className="p-3 lg:p-6 min-h-screen flex flex-col gap-6 bg-background text-foreground">
       <header className="relative border-3 border-double p-3 flex flex-col gap-3">
@@ -267,56 +232,71 @@ export default function Projects() {
         }
       />
 
-      {!isPageLoading && (
-        <div className="flex justify-between items-center">
-          <span className="text-xs font-bold border-3 border-double px-2 py-1 uppercase">
-            {filteredPosts.length}{" "}
-            {filteredPosts.length === 1 ? "project" : "projects"}
+      {isError ? (
+        <div className="border-3 border-double border-destructive p-4 flex items-center gap-2 bg-destructive/10">
+          <AlertTriangle className="h-5 w-5 text-destructive" />
+          <span className="text-xs font-bold text-destructive">
+            Failed to load projects. Please check your connection and try again.
           </span>
         </div>
-      )}
+      ) : (
+        <>
+          {!isPageLoading && (
+            <div className="flex justify-between items-center">
+              <span className="text-xs font-bold border-3 border-double px-2 py-1 uppercase">
+                {filteredPosts.length}{" "}
+                {filteredPosts.length === 1 ? "project" : "projects"}
+              </span>
+            </div>
+          )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-        {isPageLoading
-          ? Array.from({ length: 6 }).map((_, i) => <CardSkeleton key={i} />)
-          : filteredPosts.map((post) => <PostCard key={post.id} post={post} />)}
-      </div>
-
-      {!isPageLoading && filteredPosts.length === 0 && (
-        <div className="p-3 border-3 border-double text-center flex flex-col gap-3 items-center font-bold">
-          <p className="text-sm">No projects found.</p>
-          <p className="text-xs">
-            Try different keywords or switch to the other tab.
-          </p>
-        </div>
-      )}
-
-      {/* --- PAGINATION CONTROLS --- */}
-      {activeData && activeData.totalPages > 1 && (
-        <div className="flex items-center justify-between border-3 border-double p-3 mt-4">
-          <p className="text-xs font-bold opacity-70">
-            Showing Page {activeData.page} of {activeData.totalPages} (
-            {activeData.total} total posts)
-          </p>
-          <div className="flex gap-2">
-            <button
-              disabled={page === 1 || isPageLoading}
-              onClick={() =>
-                updateURL("page", String(Math.max(1, page - 1)), false)
-              }
-              className="border-3 border-double px-3 py-1 text-xs font-bold hover:bg-primary hover:text-primary-foreground disabled:opacity-50 transition-colors"
-            >
-              Prev
-            </button>
-            <button
-              disabled={page === activeData.totalPages || isPageLoading}
-              onClick={() => updateURL("page", String(page + 1), false)}
-              className="border-3 border-double px-3 py-1 text-xs font-bold hover:bg-primary hover:text-primary-foreground disabled:opacity-50 transition-colors"
-            >
-              Next
-            </button>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {isPageLoading
+              ? Array.from({ length: 6 }).map((_, i) => (
+                  <CardSkeleton key={i} />
+                ))
+              : filteredPosts.map((post) => (
+                  <PostCard key={post.id} post={post} />
+                ))}
           </div>
-        </div>
+
+          {!isPageLoading && filteredPosts.length === 0 && (
+            <div className="p-3 border-3 border-double text-center flex flex-col gap-3 items-center font-bold">
+              <p className="text-sm">No projects found.</p>
+              <p className="text-xs">
+                Try different keywords or switch to the other tab.
+              </p>
+            </div>
+          )}
+
+          {/* --- PAGINATION CONTROLS --- */}
+          {activeData && activeData.totalPages > 1 && (
+            <div className="flex items-center justify-between border-3 border-double p-3 mt-4">
+              <p className="text-xs font-bold opacity-70">
+                Showing Page {activeData.page} of {activeData.totalPages} (
+                {activeData.total} total posts)
+              </p>
+              <div className="flex gap-2">
+                <button
+                  disabled={page === 1 || isPageLoading}
+                  onClick={() =>
+                    updateURL("page", String(Math.max(1, page - 1)), false)
+                  }
+                  className="border-3 border-double px-3 py-1 text-xs font-bold hover:bg-primary hover:text-primary-foreground disabled:opacity-50 transition-colors"
+                >
+                  Prev
+                </button>
+                <button
+                  disabled={page === activeData.totalPages || isPageLoading}
+                  onClick={() => updateURL("page", String(page + 1), false)}
+                  className="border-3 border-double px-3 py-1 text-xs font-bold hover:bg-primary hover:text-primary-foreground disabled:opacity-50 transition-colors"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </section>
   );

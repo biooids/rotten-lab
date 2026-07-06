@@ -14,6 +14,7 @@ import {
   useChangePasswordMutation,
   useDeleteAccountMutation,
   useLogoutMutation,
+  useUploadAvatarMutation,
 } from "@/lib/features/auth/authApiSlice";
 import { useTestGeminiConnectionMutation } from "@/lib/features/ai/gemini/geminiApiSlice";
 import { useTestClaudeConnectionMutation } from "@/lib/features/ai/claude/claudeApiSlice";
@@ -26,9 +27,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import CornerFlourish from "@/components/shared/CornerFlourish";
 import {
-  User,
-  Key,
-  Save,
   Trash2,
   Eye,
   EyeOff,
@@ -36,13 +34,24 @@ import {
   Check,
   LogOut,
   ShieldAlert,
-  Server,
-  Activity,
   Upload,
-  ImageIcon,
+  Plus,
+  X,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import AuthGuard from "@/components/shared/AuthGuard";
+
+type UpdatingTarget =
+  | "profile"
+  | "upload-avatar"
+  | "keys"
+  | "clear-gemini"
+  | "clear-claude"
+  | "password"
+  | "delete"
+  | "logout"
+  | null;
 
 export default function Me() {
   const router = useRouter();
@@ -56,6 +65,8 @@ export default function Me() {
 
   const [updateAccount, { isLoading: isUpdatingProfile }] =
     useUpdateAccountMutation();
+  const [uploadAvatar, { isLoading: isUploadingAvatar }] =
+    useUploadAvatarMutation();
   const [changePassword, { isLoading: isChangingPassword }] =
     useChangePasswordMutation();
   const [deleteAccount, { isLoading: isDeleting }] = useDeleteAccountMutation();
@@ -70,7 +81,7 @@ export default function Me() {
   const [username, setUsername] = useState(user?.username || "");
   const [profileTitle, setProfileTitle] = useState(user?.profile_title || "");
   const [avatarUrl, setAvatarUrl] = useState(user?.avatar_url || "");
-  const [avatarBase64, setAvatarBase64] = useState("");
+  const [avatarInput, setAvatarInput] = useState("");
 
   // --- PASSWORD STATE ---
   const [currentPassword, setCurrentPassword] = useState("");
@@ -105,17 +116,17 @@ export default function Me() {
   const [passwordFormError, setPasswordFormError] = useState("");
 
   // TRACK TARGETED BUTTON STATES
-  const [updatingTarget, setUpdatingTarget] = useState<
-    "profile" | "keys" | "clear-gemini" | "clear-claude" | null
-  >(null);
+  const [updatingTarget, setUpdatingTarget] = useState<UpdatingTarget>(null);
 
   // GLOBAL UI LOCKOUT
   const isAnyLoading =
     isUpdatingProfile ||
+    isUploadingAvatar ||
     isChangingPassword ||
     isDeleting ||
     isTestingGemini ||
-    isTestingClaude;
+    isTestingClaude ||
+    updatingTarget === "logout";
 
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
 
@@ -134,7 +145,7 @@ export default function Me() {
       const profileVal = updateSchema.safeParse({
         username,
         profileTitle,
-        avatarUrl: avatarBase64 ? undefined : avatarUrl,
+        avatarUrl,
       });
 
       if (!profileVal.success) {
@@ -162,7 +173,6 @@ export default function Me() {
     username,
     profileTitle,
     avatarUrl,
-    avatarBase64,
     currentPassword,
     newPassword,
     confirmPassword,
@@ -176,6 +186,7 @@ export default function Me() {
   };
 
   const handleLogout = async () => {
+    setUpdatingTarget("logout");
     try {
       await logoutApi().unwrap();
     } catch {
@@ -186,26 +197,47 @@ export default function Me() {
     }
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAddAvatarUrl = () => {
+    if (avatarInput.trim()) {
+      setAvatarUrl(avatarInput.trim());
+      setAvatarInput("");
+    }
+  };
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     if (file.size > 5 * 1024 * 1024) {
-      // 5MB limit
       setProfileFormError("Image size must be less than 5MB.");
       return;
     }
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setAvatarBase64(reader.result as string);
-      setAvatarUrl(""); // Clear URL if they upload a file
-      setProfileFormError("");
-    };
-    reader.onerror = () => {
-      setProfileFormError("Failed to read image file.");
-    };
-    reader.readAsDataURL(file);
+    setProfileFormError("");
+    setUpdatingTarget("upload-avatar");
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const result = await uploadAvatar({
+        id: targetId || undefined,
+        formData,
+      }).unwrap();
+
+      setAvatarUrl(result.url);
+      setAvatarInput("");
+      flashSuccess(
+        "Image uploaded to Cloudinary. Click 'Update Profile' to save.",
+      );
+    } catch (err: any) {
+      setProfileFormError(
+        err.data?.error || "Failed to upload image to server.",
+      );
+    } finally {
+      setUpdatingTarget(null);
+      e.target.value = "";
+    }
   };
 
   const handleUpdateProfile = async () => {
@@ -213,7 +245,7 @@ export default function Me() {
     const validation = updateSchema.safeParse({
       username,
       profileTitle,
-      avatarUrl: avatarBase64 ? undefined : avatarUrl,
+      avatarUrl,
     });
 
     if (!validation.success) {
@@ -229,21 +261,16 @@ export default function Me() {
       const payload: any = {
         username,
         profileTitle,
+        avatarUrl,
         id: targetId || undefined,
       };
-
-      if (avatarBase64) {
-        payload.avatarBase64 = avatarBase64;
-      } else if (avatarUrl) {
-        payload.avatarUrl = avatarUrl;
-      }
 
       const result = await updateAccount(payload).unwrap();
 
       if (!isEditingOther) {
         dispatch(updateUser(result.user));
       }
-      setAvatarBase64(""); // Clear base64 after successful upload
+
       setAvatarUrl(result.user.avatar_url || "");
       flashSuccess(
         isEditingOther
@@ -350,6 +377,8 @@ export default function Me() {
       );
       return;
     }
+
+    setUpdatingTarget("password");
     try {
       await changePassword({
         currentPassword: isEditingOther ? undefined : currentPassword,
@@ -371,10 +400,13 @@ export default function Me() {
         err.data?.error ||
           "Password update failed. Server rejected the request.",
       );
+    } finally {
+      setUpdatingTarget(null);
     }
   };
 
   const handleDeleteUser = async () => {
+    setUpdatingTarget("delete");
     try {
       await deleteAccount(targetId || undefined).unwrap();
 
@@ -387,6 +419,8 @@ export default function Me() {
       }
     } catch {
       setError("Failed to delete user.");
+    } finally {
+      setUpdatingTarget(null);
     }
   };
 
@@ -480,7 +514,7 @@ export default function Me() {
           </div>
 
           <div className="border-l-3 border-double pl-3 flex flex-col gap-5">
-            {/* Avatar Row */}
+            {/* Avatar Row (Completely Updated for Better UX) */}
             <div className="flex flex-col gap-1">
               <label className="text-sm font-bold text-primary flex items-center justify-between gap-1">
                 <span className="flex items-center gap-1">
@@ -489,83 +523,95 @@ export default function Me() {
                 <span
                   className={cn(
                     "text-sm",
-                    avatarUrl.length > 2048
+                    avatarInput.length > 2048
                       ? "text-destructive"
                       : "text-muted-foreground",
                   )}
                 >
-                  {avatarUrl.length}/2048
+                  {avatarInput.length}/2048
                 </span>
               </label>
-              <div className="flex items-center gap-3 flex-wrap">
-                <div className="relative w-16 h-16 border-3 border-double shrink-0 bg-card overflow-hidden flex items-center justify-center">
-                  {avatarBase64 || avatarUrl ? (
-                    <img
-                      src={avatarBase64 || avatarUrl}
-                      alt="Avatar Preview"
-                      className="object-cover w-full h-full"
-                    />
-                  ) : (
-                    <User className="h-8 w-8 text-muted-foreground opacity-50" />
+
+              <div className="flex gap-2">
+                <Input
+                  value={avatarInput}
+                  onChange={(e) => setAvatarInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleAddAvatarUrl();
+                    }
+                  }}
+                  placeholder="Paste URL or click upload icon..."
+                  maxLength={2048}
+                  className="border-3 border-double rounded-none text-sm flex-1 disabled:opacity-50"
+                  disabled={isAnyLoading}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleAddAvatarUrl}
+                  disabled={isAnyLoading || !avatarInput.trim()}
+                  className="border-3 border-double rounded-none h-9 gap-1"
+                >
+                  <Plus className="h-4 w-4" />
+                  <span className="text-sm">Add</span>
+                </Button>
+                <div
+                  className={cn(
+                    "relative border-3 border-double px-3 flex items-center h-9 transition-colors",
+                    isAnyLoading ||
+                      (isUploadingAvatar && updatingTarget === "upload-avatar")
+                      ? "bg-card opacity-40 cursor-not-allowed"
+                      : "bg-card cursor-pointer hover:bg-card/80",
                   )}
-                </div>
-                <div className="flex flex-col gap-2 flex-1 min-w-[200px]">
-                  {/* CHANGED: Wrapped the upload file input and our new trash button in a flex container */}
-                  <div className="flex items-center gap-2">
-                    <div className="relative border-3 border-double px-3 flex items-center bg-card h-9 cursor-pointer hover:bg-card/80 transition-colors flex-1">
-                      <Upload className="h-4 w-4 text-primary mr-2" />
-                      <span className="text-sm font-bold text-primary">
-                        Upload Image File
-                      </span>
-                      <input
-                        type="file"
-                        disabled={isAnyLoading}
-                        className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
-                        onChange={handleImageUpload}
-                        accept="image/*"
-                      />
-                    </div>
-                    {/* CHANGED: Added conditional Button to remove base64 image and unlock URL input */}
-                    {avatarBase64 && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        className="h-9 w-9 border-3 border-double shrink-0 text-destructive border-destructive hover:bg-destructive hover:text-destructive-foreground"
-                        onClick={() => {
-                          setAvatarBase64("");
-                          setAvatarUrl(user?.avatar_url || "");
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
-                  <Input
-                    value={avatarUrl}
-                    onChange={(e) => {
-                      setAvatarUrl(e.target.value);
-                      setAvatarBase64(""); // Prioritize URL if they start typing here
-                    }}
-                    placeholder="Or paste an image URL..."
-                    className="border-3 border-double rounded-none text-sm"
-                    disabled={isAnyLoading || !!avatarBase64}
+                >
+                  {isUploadingAvatar && updatingTarget === "upload-avatar" ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  ) : (
+                    <Upload className="h-4 w-4 text-primary" />
+                  )}
+                  <input
+                    type="file"
+                    disabled={isAnyLoading}
+                    className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
+                    onChange={handleImageUpload}
+                    accept="image/*"
                   />
                 </div>
               </div>
+
               {fieldErrors.avatarUrl && (
                 <p className="text-sm text-destructive font-bold mt-1">
                   {fieldErrors.avatarUrl}
                 </p>
               )}
+
+              {/* Avatar Preview block */}
+              {avatarUrl && (
+                <div className="relative h-20 w-20 border-3 border-double group mt-2 bg-card overflow-hidden">
+                  <img
+                    src={avatarUrl}
+                    alt="Avatar Preview"
+                    className="h-full w-full object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setAvatarUrl("")}
+                    disabled={isAnyLoading}
+                    className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground h-6 w-6 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity disabled:cursor-not-allowed"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Profile Title */}
-            <div className="flex flex-col gap-1">
-              {/* CHANGED: Added flex justify-between to accommodate the new character counter span */}
+            <div className="flex flex-col gap-1 mt-2">
               <label className="text-sm font-bold text-primary flex justify-between items-center">
                 <span>Display Title</span>
-                {/* CHANGED: Added dynamic character length tracker */}
                 <span
                   className={cn(
                     "text-sm",
@@ -659,7 +705,7 @@ export default function Me() {
           </div>
 
           <div className="border-l-3 border-double pl-3 flex flex-col gap-4">
-            <p className="text-sm  opacity-80 max-w-2xl">
+            <p className="text-sm opacity-80 max-w-2xl">
               Provide your own API keys to bypass rate limits and utilize
               premium AI models for security audits. Keys are encrypted at rest
               and never displayed after saving.
@@ -686,7 +732,7 @@ export default function Me() {
                     <button
                       onClick={handleTestGemini}
                       disabled={isAnyLoading}
-                      className="text-sm cursor-pointer border-3 border-double p-1 font-bold text-blue-500 hover:text-blue-500/80 outline-none flex items-center gap-1  disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="text-sm cursor-pointer border-3 border-double p-1 font-bold text-blue-500 hover:text-blue-500/80 outline-none flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {isTestingGemini ? "Pinging..." : "Test Key"}
                     </button>
@@ -696,7 +742,7 @@ export default function Me() {
                     <button
                       onClick={() => handleClearApiKey("gemini")}
                       disabled={isAnyLoading}
-                      className="text-sm cursor-pointer border-3 border-double p-1 font-bold text-destructive hover:text-destructive/80 outline-none  disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
+                      className="text-sm cursor-pointer border-3 border-double p-1 font-bold text-destructive hover:text-destructive/80 outline-none disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
                     >
                       {isUpdatingProfile && updatingTarget === "clear-gemini"
                         ? "Clearing..."
@@ -772,7 +818,7 @@ export default function Me() {
                     <button
                       onClick={handleTestClaude}
                       disabled={isAnyLoading}
-                      className="text-sm font-bold border-3 border-double cursor-pointer p-1 text-orange-500 hover:text-orange-500/80 outline-none flex items-center gap-1  disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="text-sm font-bold border-3 border-double cursor-pointer p-1 text-orange-500 hover:text-orange-500/80 outline-none flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {isTestingClaude ? "Pinging..." : "Test Key"}
                     </button>
@@ -782,7 +828,7 @@ export default function Me() {
                     <button
                       onClick={() => handleClearApiKey("claude")}
                       disabled={isAnyLoading}
-                      className="text-sm font-bold border-3 border-double cursor-pointer p-1 text-destructive  outline-none  disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline hover:text-destructive/80"
+                      className="text-sm font-bold border-3 border-double cursor-pointer p-1 text-destructive outline-none disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline hover:text-destructive/80"
                     >
                       {isUpdatingProfile && updatingTarget === "clear-claude"
                         ? "Clearing..."
@@ -911,12 +957,10 @@ export default function Me() {
             )}
 
             <div className="flex flex-col gap-1">
-              {/* CHANGED: Added flex justify-between to accommodate the new character counter span */}
               <label className="text-sm font-bold text-primary flex justify-between items-center">
                 <span>
                   {isEditingOther ? "New System Password" : "New Password"}
                 </span>
-                {/* CHANGED: Added dynamic character length tracker */}
                 <span
                   className={cn(
                     "text-sm",
@@ -984,7 +1028,7 @@ export default function Me() {
               variant="outline"
             >
               <span>
-                {isChangingPassword
+                {isChangingPassword && updatingTarget === "password"
                   ? "Updating..."
                   : isEditingOther
                     ? "Force Password Reset"
@@ -1030,7 +1074,9 @@ export default function Me() {
                 className="border-3 border-double border-destructive text-destructive rounded-none w-full sm:w-fit gap-1 hover:bg-destructive hover:text-destructive-foreground disabled:opacity-50"
               >
                 <LogOut className="h-4 w-4" />
-                <span>Logout</span>
+                <span>
+                  {updatingTarget === "logout" ? "Logging out..." : "Logout"}
+                </span>
               </Button>
             )}
 
@@ -1060,7 +1106,7 @@ export default function Me() {
                   >
                     <Trash2 className="h-4 w-4" />
                     <span>
-                      {isDeleting
+                      {isDeleting && updatingTarget === "delete"
                         ? "Deleting..."
                         : isEditingOther
                           ? "Delete User"

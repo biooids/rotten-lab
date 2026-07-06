@@ -9,10 +9,6 @@ import FilterSection from "../FilterSection";
 import { AlertTriangle } from "lucide-react";
 import {
   useGetMyPostsQuery,
-  useSearchPostsQuery,
-  useFilterByTagQuery,
-  useFilterByCategoryQuery,
-  useSortPostsQuery,
   useGetAllTagsQuery,
 } from "@/lib/features/posts/postsApiSlice";
 import AuthGuard from "@/components/shared/AuthGuard";
@@ -73,19 +69,7 @@ function MyPostsContent() {
 
       if (resetPage) params.set("page", "1");
 
-      if (key === "q" && value) {
-        params.delete("tag");
-        params.delete("category");
-      }
-      if (key === "tag" && value) {
-        params.delete("q");
-        params.delete("category");
-      }
-      if (key === "category" && value) {
-        params.delete("q");
-        params.delete("tag");
-      }
-
+      // Note: Removed the forced deletion of other parameters to allow compound queries
       router.push(`${pathname}?${params.toString()}`, { scroll: false });
     },
     [searchParams, pathname, router],
@@ -125,79 +109,25 @@ function MyPostsContent() {
     [updateURL],
   );
 
-  // --- DYNAMIC QUERY RESOLUTION ---
-  const isSearch = Boolean(searchQuery);
-  const isTag = selectedTags.length > 0;
-  const isCategory = Boolean(activeCategory);
-  const isSort = sortBy !== "date" || sortOrder !== "DESC";
-
+  // --- UNIFIED COMPOUND QUERY ---
   const {
-    data: myData,
-    isLoading: loadingMy,
-    isFetching: fetchingMy,
-    isError: errMy,
-  } = useGetMyPostsQuery(page, {
-    skip: isSearch || isTag || isCategory || isSort,
+    data: activeData,
+    isLoading,
+    isFetching,
+    isError,
+  } = useGetMyPostsQuery({
+    page,
+    q: searchQuery || null,
+    category: activeCategory !== "all" ? activeCategory : null,
+    tag: activeTagsString || null,
+    sortBy,
+    sortOrder,
   });
 
-  const {
-    data: searchData,
-    isLoading: loadingSearch,
-    isFetching: fetchingSearch,
-    isError: errSearch,
-  } = useSearchPostsQuery({ q: searchQuery, page }, { skip: !isSearch });
+  const { data: globalTagsData } = useGetAllTagsQuery(); // For MyPosts, global tags are fine to show all options
 
-  const {
-    data: tagData,
-    isLoading: loadingTag,
-    isFetching: fetchingTag,
-    isError: errTag,
-  } = useFilterByTagQuery({ tag: activeTagsString, page }, { skip: !isTag });
-
-  const {
-    data: categoryData,
-    isLoading: loadingCategory,
-    isFetching: fetchingCategory,
-    isError: errCat,
-  } = useFilterByCategoryQuery(
-    { cat: activeCategory, page },
-    { skip: !isCategory },
-  );
-
-  const {
-    data: sortData,
-    isLoading: loadingSort,
-    isFetching: fetchingSort,
-    isError: errSort,
-  } = useSortPostsQuery(
-    { by: sortBy, order: sortOrder, page },
-    { skip: !isSort || isSearch || isTag || isCategory },
-  );
-  const { data: globalTagsData } = useGetAllTagsQuery();
-  let activeData = myData;
-  let isPageLoading = loadingMy || fetchingMy;
-  let hasError = errMy;
-
-  if (isSearch) {
-    activeData = searchData;
-    isPageLoading = loadingSearch || fetchingSearch;
-    hasError = errSearch;
-  } else if (isTag) {
-    activeData = tagData;
-    isPageLoading = loadingTag || fetchingTag;
-    hasError = errTag;
-  } else if (isCategory) {
-    activeData = categoryData;
-    isPageLoading = loadingCategory || fetchingCategory;
-    hasError = errCat;
-  } else if (isSort) {
-    activeData = sortData;
-    isPageLoading = loadingSort || fetchingSort;
-    hasError = errSort;
-  }
-
+  const isPageLoading = isLoading || isFetching;
   const filteredPosts = activeData?.posts || [];
-
   const allAvailableTags = globalTagsData?.tags || [];
 
   return (
@@ -238,7 +168,7 @@ function MyPostsContent() {
         clearAllFilters={() => router.push(pathname, { scroll: false })}
       />
 
-      {hasError ? (
+      {isError ? (
         <div className="border-3 border-double border-destructive p-4 flex items-center gap-2 bg-destructive/10">
           <AlertTriangle className="h-5 w-5 text-destructive" />
           <span className="text-xs font-bold text-destructive">

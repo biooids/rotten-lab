@@ -34,23 +34,9 @@ export const postsRoutes = async ({
     return true;
   }
 
-  if (action === "search" && req.method === "GET") {
-    await postsController.searchPosts(req, res, parseURL);
-    return true;
-  }
-
-  if (action === "filter-category" && req.method === "GET") {
-    await postsController.filterByCategory(req, res, parseURL);
-    return true;
-  }
-
-  if (action === "filter-tag" && req.method === "GET") {
-    await postsController.filterByTag(req, res, parseURL);
-    return true;
-  }
-
-  if (action === "sort" && req.method === "GET") {
-    await postsController.sortPosts(req, res, parseURL);
+  // --- NEW UNIFIED ROUTE: Replaces search, filter-category, filter-tag, and sort ---
+  if (action === "filter" && req.method === "GET") {
+    await postsController.getFilteredPosts(req, res, parseURL);
     return true;
   }
 
@@ -85,8 +71,9 @@ export const postsRoutes = async ({
     return true;
   }
 
+  // --- UPDATED ROUTE: Now passes parseURL so the controller can extract ?category= ---
   if (action === "tags" && req.method === "GET") {
-    await postsController.getTags(req, res);
+    await postsController.getTags(req, res, parseURL);
     return true;
   }
 

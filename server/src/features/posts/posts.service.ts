@@ -3,12 +3,13 @@ import { pool } from "../../db/psql.js";
 import type { CreatePostDTO } from "./posts.types.js";
 
 export const postsService = {
+  // We keep the basic getAllPosts just in case a simple non-filtered fetch is needed.
   async getAllPosts(page: number = 1, limit: number = 12) {
     try {
       const offset = (page - 1) * limit;
       const countSql = "SELECT COUNT(*) FROM posts;";
       const dataSql = `
-        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
+        SELECT p.*, u.username AS author_name, u.profile_title AS author_title, u.avatar_url AS author_avatar 
         FROM posts p
         JOIN users u ON p.author_id = u.id
         ORDER BY p.created_at DESC 
@@ -35,7 +36,7 @@ export const postsService = {
   async getPost(postId: string) {
     try {
       const sql = `
-        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
+        SELECT p.*, u.username AS author_name, u.profile_title AS author_title, u.avatar_url AS author_avatar 
         FROM posts p
         JOIN users u ON p.author_id = u.id
         WHERE p.id = $1;
@@ -82,7 +83,7 @@ export const postsService = {
       const newPostId = insertResult.rows[0].id;
 
       const fullPostSql = `
-        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
+        SELECT p.*, u.username AS author_name, u.profile_title AS author_title, u.avatar_url AS author_avatar 
         FROM posts p
         JOIN users u ON p.author_id = u.id
         WHERE p.id = $1;
@@ -114,7 +115,7 @@ export const postsService = {
       const updatedPostId = updateResult.rows[0].id;
 
       const fullPostSql = `
-        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
+        SELECT p.*, u.username AS author_name, u.profile_title AS author_title, u.avatar_url AS author_avatar 
         FROM posts p
         JOIN users u ON p.author_id = u.id
         WHERE p.id = $1;
@@ -140,7 +141,18 @@ export const postsService = {
     }
   },
 
-  async searchPosts(searchTerm: string, page: number = 1, limit: number = 12) {
+  // --- NEW UNIFIED AND VERBOSE QUERY METHOD TO FIX CROSS-CONTAMINATION ---
+  async getFilteredPosts(
+    page: number = 1,
+    limit: number = 12,
+    searchQuery: string | null = null,
+    category: string | null = null,
+    subcategory: string | null = null,
+    tagsArray: string[] | null = null,
+    sortBy: string = "date",
+    sortOrder: string = "DESC",
+    authorId: string | null = null,
+  ) {
     const client = await pool.connect();
 
     try {
@@ -148,28 +160,97 @@ export const postsService = {
 
       await client.query("BEGIN;");
 
-      await client.query("SET LOCAL pg_trgm.word_similarity_threshold = 0.3;");
+      // We only need pg_trgm threshold if a search query is provided
+      if (searchQuery && searchQuery.trim() !== "") {
+        await client.query(
+          "SET LOCAL pg_trgm.word_similarity_threshold = 0.3;",
+        );
+      }
+
+      let whereClauses: string[] = [];
+      let queryValues: any[] = [];
+      let paramIndex = 1;
+
+      // 1. Author Filter (For "My Posts")
+      if (authorId && authorId.trim() !== "") {
+        whereClauses.push(`p.author_id = $${paramIndex}`);
+        queryValues.push(authorId.trim());
+        paramIndex++;
+      }
+
+      // 2. Search Query Filter
+      if (searchQuery && searchQuery.trim() !== "") {
+        whereClauses.push(
+          `(p.search_vector @@ websearch_to_tsquery('english', $${paramIndex}) OR $${paramIndex} <% p.title)`,
+        );
+        queryValues.push(searchQuery.trim());
+        paramIndex++;
+      }
+
+      // 3. Category Filter
+      if (category && category !== "all" && category.trim() !== "") {
+        whereClauses.push(`p.category = $${paramIndex}`);
+        queryValues.push(category.trim());
+        paramIndex++;
+      }
+
+      // 4. Subcategory Filter
+      if (subcategory && subcategory.trim() !== "") {
+        whereClauses.push(`p.subcategory = $${paramIndex}`);
+        queryValues.push(subcategory.trim());
+        paramIndex++;
+      }
+
+      // 5. Array Tags Filter
+      if (tagsArray && tagsArray.length > 0) {
+        whereClauses.push(`p.tags && $${paramIndex}::text[]`);
+        queryValues.push(tagsArray);
+        paramIndex++;
+      }
+
+      // Explicitly build the WHERE string
+      let whereString = "";
+      if (whereClauses.length > 0) {
+        whereString = "WHERE " + whereClauses.join(" AND ");
+      }
+
+      // Explicitly handle sorting to prevent SQL injection and magic strings
+      let orderString = "ORDER BY p.created_at DESC";
+      if (sortBy === "title") {
+        if (sortOrder === "ASC") {
+          orderString = "ORDER BY p.title ASC";
+        } else {
+          orderString = "ORDER BY p.title DESC";
+        }
+      } else {
+        if (sortOrder === "ASC") {
+          orderString = "ORDER BY p.created_at ASC";
+        } else {
+          orderString = "ORDER BY p.created_at DESC";
+        }
+      }
 
       const countSql = `
         SELECT COUNT(*) 
-        FROM posts 
-        WHERE search_vector @@ websearch_to_tsquery('english', $1)
-           OR $1 <% title;
+        FROM posts p
+        ${whereString};
       `;
 
       const dataSql = `
-        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
+        SELECT p.*, u.username AS author_name, u.profile_title AS author_title, u.avatar_url AS author_avatar 
         FROM posts p
         JOIN users u ON p.author_id = u.id
-        WHERE p.search_vector @@ websearch_to_tsquery('english', $1)
-           OR $1 <% title
-        ORDER BY p.created_at DESC
-        LIMIT $2 OFFSET $3;
+        ${whereString}
+        ${orderString}
+        LIMIT $${paramIndex} OFFSET $${paramIndex + 1};
       `;
 
+      // We append limit and offset to the end of our dynamic values array
+      const finalValues = [...queryValues, limit, offset];
+
       const [countRes, dataRes] = await Promise.all([
-        client.query(countSql, [searchTerm]),
-        client.query(dataSql, [searchTerm, limit, offset]),
+        client.query(countSql, queryValues),
+        client.query(dataSql, finalValues),
       ]);
 
       await client.query("COMMIT;");
@@ -182,215 +263,11 @@ export const postsService = {
       await client.query("ROLLBACK;");
 
       process.stderr.write(
-        `[postsService.searchPosts] RAW DB ERROR: ${err.message}\nStack: ${err.stack}\n`,
+        `[postsService.getFilteredPosts] RAW DB ERROR: ${err.message}\nStack: ${err.stack}\n`,
       );
       throw err;
     } finally {
       client.release();
-    }
-  },
-  async filterByTag(tagsString: string, page: number = 1, limit: number = 12) {
-    try {
-      const offset = (page - 1) * limit;
-
-      const tagsArray = tagsString
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean);
-
-      const countSql = "SELECT COUNT(*) FROM posts WHERE tags && $1::text[];";
-      const dataSql = `
-        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
-        FROM posts p
-        JOIN users u ON p.author_id = u.id
-        WHERE p.tags && $1::text[] 
-        ORDER BY p.created_at DESC 
-        LIMIT $2 OFFSET $3;
-      `;
-
-      const [countRes, dataRes] = await Promise.all([
-        pool.query(countSql, [tagsArray]),
-        pool.query(dataSql, [tagsArray, limit, offset]),
-      ]);
-
-      return {
-        rows: dataRes.rows,
-        totalCount: parseInt(countRes.rows[0]?.count || "0", 10),
-      };
-    } catch (err: any) {
-      process.stderr.write(
-        `[postsService.filterByTag] RAW DB ERROR: ${err.message}\nStack: ${err.stack}\n`,
-      );
-      throw err;
-    }
-  },
-  async filterByCategory(
-    category: string,
-    page: number = 1,
-    limit: number = 12,
-  ) {
-    try {
-      const offset = (page - 1) * limit;
-      const countSql = "SELECT COUNT(*) FROM posts WHERE category = $1;";
-      const dataSql = `
-        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
-        FROM posts p
-        JOIN users u ON p.author_id = u.id
-        WHERE p.category = $1 
-        ORDER BY p.created_at DESC 
-        LIMIT $2 OFFSET $3;
-      `;
-
-      const [countRes, dataRes] = await Promise.all([
-        pool.query(countSql, [category]),
-        pool.query(dataSql, [category, limit, offset]),
-      ]);
-
-      return {
-        rows: dataRes.rows,
-        totalCount: parseInt(countRes.rows[0]?.count || "0", 10),
-      };
-    } catch (err: any) {
-      process.stderr.write(
-        `[postsService.filterByCategory] RAW DB ERROR: ${err.message}\nStack: ${err.stack}\n`,
-      );
-      throw err;
-    }
-  },
-
-  async filterBySubcategory(
-    category: string,
-    subcategory: string,
-    page: number = 1,
-    limit: number = 12,
-  ) {
-    try {
-      const offset = (page - 1) * limit;
-      const countSql =
-        "SELECT COUNT(*) FROM posts WHERE category = $1 AND subcategory = $2;";
-      const dataSql = `
-        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
-        FROM posts p
-        JOIN users u ON p.author_id = u.id
-        WHERE p.category = $1 AND p.subcategory = $2 
-        ORDER BY p.created_at DESC 
-        LIMIT $3 OFFSET $4;
-      `;
-
-      const [countRes, dataRes] = await Promise.all([
-        pool.query(countSql, [category, subcategory]),
-        pool.query(dataSql, [category, subcategory, limit, offset]),
-      ]);
-
-      return {
-        rows: dataRes.rows,
-        totalCount: parseInt(countRes.rows[0]?.count || "0", 10),
-      };
-    } catch (err: any) {
-      process.stderr.write(
-        `[postsService.filterBySubcategory] RAW DB ERROR: ${err.message}\nStack: ${err.stack}\n`,
-      );
-      throw err;
-    }
-  },
-
-  async sortPostsByDate(
-    order: "ASC" | "DESC",
-    page: number = 1,
-    limit: number = 12,
-  ) {
-    try {
-      const offset = (page - 1) * limit;
-      const countSql = "SELECT COUNT(*) FROM posts;";
-      const dataSql = `
-        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
-        FROM posts p
-        JOIN users u ON p.author_id = u.id
-        ORDER BY p.created_at ${order} 
-        LIMIT $1 OFFSET $2;
-      `;
-
-      const [countRes, dataRes] = await Promise.all([
-        pool.query(countSql),
-        pool.query(dataSql, [limit, offset]),
-      ]);
-
-      return {
-        rows: dataRes.rows,
-        totalCount: parseInt(countRes.rows[0]?.count || "0", 10),
-      };
-    } catch (err: any) {
-      process.stderr.write(
-        `[postsService.sortPostsByDate] RAW DB ERROR: ${err.message}\nStack: ${err.stack}\n`,
-      );
-      throw err;
-    }
-  },
-
-  async sortPostsByTitle(
-    order: "ASC" | "DESC",
-    page: number = 1,
-    limit: number = 12,
-  ) {
-    try {
-      const offset = (page - 1) * limit;
-      const countSql = "SELECT COUNT(*) FROM posts;";
-      const dataSql = `
-        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
-        FROM posts p
-        JOIN users u ON p.author_id = u.id
-        ORDER BY p.title ${order} 
-        LIMIT $1 OFFSET $2;
-      `;
-
-      const [countRes, dataRes] = await Promise.all([
-        pool.query(countSql),
-        pool.query(dataSql, [limit, offset]),
-      ]);
-
-      return {
-        rows: dataRes.rows,
-        totalCount: parseInt(countRes.rows[0]?.count || "0", 10),
-      };
-    } catch (err: any) {
-      process.stderr.write(
-        `[postsService.sortPostsByTitle] RAW DB ERROR: ${err.message}\nStack: ${err.stack}\n`,
-      );
-      throw err;
-    }
-  },
-
-  async getPostsByAuthor(
-    authorId: string,
-    page: number = 1,
-    limit: number = 12,
-  ) {
-    try {
-      const offset = (page - 1) * limit;
-      const countSql = "SELECT COUNT(*) FROM posts WHERE author_id = $1;";
-      const dataSql = `
-        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
-        FROM posts p
-        JOIN users u ON p.author_id = u.id
-        WHERE p.author_id = $1 
-        ORDER BY p.created_at DESC 
-        LIMIT $2 OFFSET $3;
-      `;
-
-      const [countRes, dataRes] = await Promise.all([
-        pool.query(countSql, [authorId]),
-        pool.query(dataSql, [authorId, limit, offset]),
-      ]);
-
-      return {
-        rows: dataRes.rows,
-        totalCount: parseInt(countRes.rows[0]?.count || "0", 10),
-      };
-    } catch (err: any) {
-      process.stderr.write(
-        `[postsService.getPostsByAuthor] RAW DB ERROR: ${err.message}\nStack: ${err.stack}\n`,
-      );
-      throw err;
     }
   },
 
@@ -403,7 +280,7 @@ export const postsService = {
         WHERE p.category = 'projects' AND p.subcategory = 'serious' AND u.role = 'super_admin';
       `;
       const dataSql = `
-        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
+        SELECT p.*, u.username AS author_name, u.profile_title AS author_title, u.avatar_url AS author_avatar 
         FROM posts p
         JOIN users u ON p.author_id = u.id
         WHERE p.category = 'projects' AND p.subcategory = 'serious' AND u.role = 'super_admin'
@@ -437,7 +314,7 @@ export const postsService = {
         WHERE p.category = 'diary' AND u.role = 'super_admin';
       `;
       const dataSql = `
-        SELECT p.*, u.username AS author_name, u.profile_title AS author_role, u.avatar_url AS author_avatar 
+        SELECT p.*, u.username AS author_name, u.profile_title AS author_title, u.avatar_url AS author_avatar 
         FROM posts p
         JOIN users u ON p.author_id = u.id
         WHERE p.category = 'diary' AND u.role = 'super_admin'
@@ -462,14 +339,30 @@ export const postsService = {
     }
   },
 
-  async getAllUniqueTags() {
+  // --- NEW EXPLICIT METHOD TO FETCH TAGS SPECIFIC TO A CATEGORY ---
+  async getAllUniqueTags(category: string | null = null) {
     try {
-      const sql = `
-        SELECT DISTINCT unnest(tags) AS tag 
-        FROM posts 
-        ORDER BY tag ASC;
-      `;
-      const result = await pool.query(sql);
+      let sql = "";
+      let values: any[] = [];
+
+      // Only apply the category WHERE clause if it exists and is not 'all'
+      if (category && category !== "all" && category.trim() !== "") {
+        sql = `
+          SELECT DISTINCT unnest(tags) AS tag 
+          FROM posts 
+          WHERE category = $1
+          ORDER BY tag ASC;
+        `;
+        values.push(category.trim());
+      } else {
+        sql = `
+          SELECT DISTINCT unnest(tags) AS tag 
+          FROM posts 
+          ORDER BY tag ASC;
+        `;
+      }
+
+      const result = await pool.query(sql, values);
 
       const tagsList: string[] = [];
 

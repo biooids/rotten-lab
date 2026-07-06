@@ -47,24 +47,33 @@ export const authApiSlice = createApi({
       }),
     }),
 
-    // --- CHANGED: Added profileTitle, avatarBase64, and avatarUrl to the mutation payload
+    // --- CHANGED: Added new endpoint to handle multipart/form-data specifically for avatars
+    uploadAvatar: builder.mutation<
+      { url: string },
+      { id?: string; formData: FormData }
+    >({
+      query: ({ id, formData }) => ({
+        url: id ? `/auth/upload-avatar?id=${id}` : "/auth/upload-avatar",
+        method: "POST",
+        body: formData,
+      }),
+    }),
+
+    // --- CHANGED: Removed avatarBase64 entirely from payload
     updateAccount: builder.mutation<
       AuthResponse,
       {
         username?: string;
         profileTitle?: string;
-        avatarBase64?: string;
         avatarUrl?: string;
         geminiApiKey?: string;
         claudeApiKey?: string;
         id?: string;
       }
     >({
-      // --- CHANGED: Destructured the new keys and added them to the request body
       query: ({
         username,
         profileTitle,
-        avatarBase64,
         avatarUrl,
         geminiApiKey,
         claudeApiKey,
@@ -75,7 +84,6 @@ export const authApiSlice = createApi({
         body: {
           username,
           profileTitle,
-          avatarBase64,
           avatarUrl,
           geminiApiKey,
           claudeApiKey,
@@ -115,6 +123,7 @@ export const {
   useSignupMutation,
   useLoginMutation,
   useLogoutMutation,
+  useUploadAvatarMutation, // EXPORTED THE NEW HOOK
   useUpdateAccountMutation,
   useChangePasswordMutation,
   useDeleteAccountMutation,

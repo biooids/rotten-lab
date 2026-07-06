@@ -18,36 +18,43 @@ export const postsApiSlice = createApi({
       providesTags: (result, error, id) => [{ type: "Post", id }],
     }),
 
-    searchPosts: builder.query<
+    // --- NEW UNIFIED FILTER ENDPOINT ---
+    // Replaces search, category filter, tag filter, and sort
+    getFilteredPosts: builder.query<
       PaginatedPostsResponse,
-      { q: string; page?: number }
+      {
+        page?: number;
+        q?: string | null;
+        category?: string | null;
+        subcategory?: string | null;
+        tag?: string | null;
+        sortBy?: string | null;
+        sortOrder?: string | null;
+      }
     >({
-      query: ({ q, page = 1 }) =>
-        `/posts/search?q=${encodeURIComponent(q)}&page=${page}`,
-    }),
+      query: ({
+        page = 1,
+        q,
+        category,
+        subcategory,
+        tag,
+        sortBy,
+        sortOrder,
+      }) => {
+        const params = new URLSearchParams();
+        params.set("page", String(page));
 
-    filterByCategory: builder.query<
-      PaginatedPostsResponse,
-      { cat: string; sub?: string; page?: number }
-    >({
-      query: ({ cat, sub, page = 1 }) =>
-        `/posts/filter-category?category=${encodeURIComponent(cat)}${sub ? `&subcategory=${encodeURIComponent(sub)}` : ""}&page=${page}`,
-    }),
+        if (q) params.set("q", q);
+        if (category && category !== "all") params.set("category", category);
+        if (subcategory) params.set("subcategory", subcategory);
+        if (tag) params.set("tag", tag);
+        if (sortBy) params.set("sortBy", sortBy);
+        if (sortOrder) params.set("sortOrder", sortOrder);
 
-    filterByTag: builder.query<
-      PaginatedPostsResponse,
-      { tag: string; page?: number }
-    >({
-      query: ({ tag, page = 1 }) =>
-        `/posts/filter-tag?tag=${encodeURIComponent(tag)}&page=${page}`,
-    }),
-
-    sortPosts: builder.query<
-      PaginatedPostsResponse,
-      { by: string; order: string; page?: number }
-    >({
-      query: ({ by, order, page = 1 }) =>
-        `/posts/sort?by=${encodeURIComponent(by)}&order=${encodeURIComponent(order)}&page=${page}`,
+        return `/posts/filter?${params.toString()}`;
+      },
+      // Using a generic Post tag ensures updates invalidate the feed
+      providesTags: ["Post"],
     }),
 
     uploadMedia: builder.mutation<{ url: string }, FormData>({
@@ -93,8 +100,36 @@ export const postsApiSlice = createApi({
       invalidatesTags: ["Post"],
     }),
 
-    getMyPosts: builder.query<PaginatedPostsResponse, number | void>({
-      query: (page = 1) => `/posts/mine?page=${page}`,
+    // --- UPDATED MY POSTS ---
+    // Now accepts the exact same unified filters as getFilteredPosts
+    getMyPosts: builder.query<
+      PaginatedPostsResponse,
+      {
+        page?: number;
+        q?: string | null;
+        category?: string | null;
+        subcategory?: string | null;
+        tag?: string | null;
+        sortBy?: string | null;
+        sortOrder?: string | null;
+      } | void
+    >({
+      query: (args) => {
+        const params = new URLSearchParams();
+        if (args) {
+          params.set("page", String(args.page || 1));
+          if (args.q) params.set("q", args.q);
+          if (args.category && args.category !== "all")
+            params.set("category", args.category);
+          if (args.subcategory) params.set("subcategory", args.subcategory);
+          if (args.tag) params.set("tag", args.tag);
+          if (args.sortBy) params.set("sortBy", args.sortBy);
+          if (args.sortOrder) params.set("sortOrder", args.sortOrder);
+        } else {
+          params.set("page", "1");
+        }
+        return `/posts/mine?${params.toString()}`;
+      },
       providesTags: ["Post"],
     }),
 
@@ -110,8 +145,15 @@ export const postsApiSlice = createApi({
       providesTags: ["Post"],
     }),
 
-    getAllTags: builder.query<{ tags: string[] }, void>({
-      query: () => `/posts/tags`,
+    // --- UPDATED ALL TAGS ---
+    // Now optionally accepts a category to scope the tags down
+    getAllTags: builder.query<{ tags: string[] }, string | null | void>({
+      query: (category) => {
+        if (category && category !== "all") {
+          return `/posts/tags?category=${encodeURIComponent(category)}`;
+        }
+        return `/posts/tags`;
+      },
       providesTags: ["Post"],
     }),
   }),
@@ -120,10 +162,7 @@ export const postsApiSlice = createApi({
 export const {
   useGetPostsQuery,
   useGetPostQuery,
-  useSearchPostsQuery,
-  useFilterByCategoryQuery,
-  useFilterByTagQuery,
-  useSortPostsQuery,
+  useGetFilteredPostsQuery, // Exported the new unified query
   useUploadMediaMutation,
   useCreatePostMutation,
   useUpdatePostMutation,

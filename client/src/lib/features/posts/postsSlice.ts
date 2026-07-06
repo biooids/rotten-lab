@@ -26,7 +26,6 @@ const postsSlice = createSlice({
   name: "posts",
   initialState,
   reducers: {
-    // Intent-based navigation: searching clears other strict filters
     setSearchQuery: (state, action: PayloadAction<string>) => {
       state.searchQuery = action.payload;
       state.activeCategory = "all";
@@ -34,7 +33,6 @@ const postsSlice = createSlice({
       state.activeTag = null;
       state.page = 1;
     },
-    // Selecting a category clears searches and tags
     setCategory: (
       state,
       action: PayloadAction<{
@@ -48,7 +46,6 @@ const postsSlice = createSlice({
       state.activeTag = null;
       state.page = 1;
     },
-    // Selecting a tag clears searches and categories
     setTag: (state, action: PayloadAction<string>) => {
       state.activeTag = action.payload;
       state.searchQuery = "";

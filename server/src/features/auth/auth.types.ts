@@ -56,7 +56,6 @@ export interface ChangePasswordDTO {
 export interface UpdateAccountDTO {
   username?: string;
   profileTitle?: string;
-  avatarBase64?: string;
   avatarUrl?: string;
   geminiApiKey?: string;
   claudeApiKey?: string;

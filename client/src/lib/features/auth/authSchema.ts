@@ -1,9 +1,8 @@
+//src/lib/features/auth/authSchema.ts
 import { z } from "zod";
 
-const imageExtensions = /\.(jpeg|jpg|gif|png|webp|svg)(\?.*)?(#.*)?$/i;
-// Validates Base64 Data URIs and limits size implicitly via string length if needed
-const base64ImageRegex =
-  /^data:image\/(jpeg|jpg|png|webp|gif|svg\+xml);base64,/;
+// Unified regex matching backend and Cloudinary supported formats
+const imageExtensions = /\.(jpeg|jpg|gif|png|webp|avif|svg)(\?.*)?(#.*)?$/i;
 
 export const loginSchema = z.object({
   username: z
@@ -50,13 +49,6 @@ export const updateSchema = z.object({
     // Transform runs after optional check to ensure fallback works
     .transform((val) => (!val || val.trim() === "" ? "Member" : val.trim())),
 
-  // Validates structure and prevents massive non-image text blobs
-  avatarBase64: z
-    .string()
-    .regex(base64ImageRegex, "Invalid base64 image format")
-    .optional()
-    .or(z.literal("")),
-
   avatarUrl: z
     .string()
     .max(2048, "Avatar URL cannot exceed 2048 characters.")
@@ -74,7 +66,7 @@ export const updateSchema = z.object({
       },
       {
         message:
-          "Please enter a valid image URL ending in .jpg, .png, .gif, etc.",
+          "Please enter a valid image URL ending in .jpg, .png, .gif, .avif, .svg, etc.",
       },
     ),
 

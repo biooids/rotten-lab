@@ -5,12 +5,9 @@ import React, { useMemo, useCallback } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import PostCard from "@/components/pages/posts/PostCard";
 import CornerFlourish from "@/components/shared/CornerFlourish";
+import { AlertTriangle } from "lucide-react";
 import {
-  useGetPostsQuery,
-  useSearchPostsQuery,
-  useFilterByCategoryQuery,
-  useFilterByTagQuery,
-  useSortPostsQuery,
+  useGetFilteredPostsQuery,
   useGetAllTagsQuery,
 } from "@/lib/features/posts/postsApiSlice";
 import FilterSection from "./FilterSection";
@@ -77,21 +74,8 @@ export default function AllPosts() {
 
       if (resetPage) params.set("page", "1");
 
-      // Replicate previous intent-based clearing logic
-      if (key === "q" && value) {
-        params.delete("category");
-        params.delete("subcategory");
-        params.delete("tag");
-      }
-      if (key === "category" && value) {
-        params.delete("q");
-        params.delete("tag");
-      }
-      if (key === "tag" && value) {
-        params.delete("q");
-        params.delete("category");
-        params.delete("subcategory");
-      }
+      // NOTE: Removed the mutually exclusive deletion logic here so the user
+      // can compound filters (e.g., search + tag + category simultaneously).
 
       router.push(`${pathname}?${params.toString()}`, { scroll: false });
     },
@@ -138,10 +122,10 @@ export default function AllPosts() {
       const params = new URLSearchParams(searchParams.toString());
       if (cat === "all" || !cat) params.delete("category");
       else params.set("category", cat);
-      params.delete("subcategory");
-      params.delete("q");
-      params.delete("tag");
+
+      params.delete("subcategory"); // Subcategory is specific to a category, so reset it
       params.set("page", "1");
+
       router.push(`${pathname}?${params.toString()}`, { scroll: false });
     },
     [searchParams, pathname, router],
@@ -151,68 +135,27 @@ export default function AllPosts() {
     router.push(pathname, { scroll: false });
   }, [pathname, router]);
 
-  // --- DYNAMIC QUERY RESOLUTION ---
-  const isSearch = Boolean(searchQuery);
-  const isTag = activeTagsArray.length > 0;
-  const isCategory = activeCategory !== "all";
-  const isSort = sortBy !== "date" || sortOrder !== "DESC";
-
+  // --- UNIFIED COMPOUND QUERY ---
   const {
-    data: allData,
-    isLoading: loadingAll,
-    isFetching: fetchingAll,
-  } = useGetPostsQuery(page, {
-    skip: isSearch || isTag || isCategory || isSort,
+    data: activeData,
+    isLoading,
+    isFetching,
+    isError,
+  } = useGetFilteredPostsQuery({
+    page,
+    q: searchQuery || null,
+    category: activeCategory !== "all" ? activeCategory : null,
+    subcategory: activeSubcategory || null,
+    tag: activeTagsString || null,
+    sortBy,
+    sortOrder,
   });
 
-  const {
-    data: searchData,
-    isLoading: loadingSearch,
-    isFetching: fetchingSearch,
-  } = useSearchPostsQuery({ q: searchQuery, page }, { skip: !isSearch });
-
-  const {
-    data: categoryData,
-    isLoading: loadingCategory,
-    isFetching: fetchingCategory,
-  } = useFilterByCategoryQuery(
-    { cat: activeCategory, sub: activeSubcategory || undefined, page },
-    { skip: !isCategory },
-  );
-
-  const {
-    data: tagData,
-    isLoading: loadingTag,
-    isFetching: fetchingTag,
-  } = useFilterByTagQuery({ tag: activeTagsString, page }, { skip: !isTag });
-
-  const {
-    data: sortData,
-    isLoading: loadingSort,
-    isFetching: fetchingSort,
-  } = useSortPostsQuery(
-    { by: sortBy, order: sortOrder, page },
-    { skip: !isSort || isSearch || isTag || isCategory },
-  );
   const { data: globalTagsData } = useGetAllTagsQuery();
-  let activeData = allData;
-  let isLoading = loadingAll || fetchingAll;
 
-  if (isSearch) {
-    activeData = searchData;
-    isLoading = loadingSearch || fetchingSearch;
-  } else if (isTag) {
-    activeData = tagData;
-    isLoading = loadingTag || fetchingTag;
-  } else if (isCategory) {
-    activeData = categoryData;
-    isLoading = loadingCategory || fetchingCategory;
-  } else if (isSort) {
-    activeData = sortData;
-    isLoading = loadingSort || fetchingSort;
-  }
-
+  const isPageLoading = isLoading || isFetching;
   const posts = activeData?.posts || [];
+  const allAvailableTags = globalTagsData?.tags || [];
 
   const allCategories = [
     "bio-engineering",
@@ -220,7 +163,6 @@ export default function AllPosts() {
     "diary",
     "projects",
   ];
-  const allAvailableTags = globalTagsData?.tags || [];
 
   return (
     <section className="p-3 lg:p-6 min-h-screen flex flex-col gap-6 bg-background text-foreground">
@@ -258,45 +200,58 @@ export default function AllPosts() {
         clearAllFilters={handleClearFilters}
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-        {isLoading
-          ? Array.from({ length: 6 }).map((_, i) => <CardSkeleton key={i} />)
-          : posts.map((post) => <PostCard key={post.id} post={post} />)}
-      </div>
-
-      {!isLoading && posts.length === 0 && (
-        <div className="p-3 border-3 border-double text-center flex flex-col gap-3 items-center">
-          <p className="text-sm font-bold">
-            No posts found matching your search criteria.
-          </p>
+      {isError ? (
+        <div className="border-3 border-double border-destructive p-4 flex items-center gap-2 bg-destructive/10">
+          <AlertTriangle className="h-5 w-5 text-destructive" />
+          <span className="text-xs font-bold text-destructive">
+            Failed to load posts. Please check your connection and try again.
+          </span>
         </div>
-      )}
-
-      {activeData && activeData.totalPages > 1 && (
-        <div className="flex items-center justify-between border-3 border-double p-3 mt-4">
-          <p className="text-xs font-bold opacity-70">
-            Showing Page {activeData.page} of {activeData.totalPages} (
-            {activeData.total} total posts)
-          </p>
-          <div className="flex gap-2">
-            <button
-              disabled={page === 1 || isLoading}
-              onClick={() =>
-                updateURL("page", String(Math.max(1, page - 1)), false)
-              }
-              className="border-3 border-double px-3 py-1 text-xs font-bold hover:bg-primary hover:text-primary-foreground disabled:opacity-50 transition-colors"
-            >
-              Prev
-            </button>
-            <button
-              disabled={page === activeData.totalPages || isLoading}
-              onClick={() => updateURL("page", String(page + 1), false)}
-              className="border-3 border-double px-3 py-1 text-xs font-bold hover:bg-primary hover:text-primary-foreground disabled:opacity-50 transition-colors"
-            >
-              Next
-            </button>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {isPageLoading
+              ? Array.from({ length: 6 }).map((_, i) => (
+                  <CardSkeleton key={i} />
+                ))
+              : posts.map((post) => <PostCard key={post.id} post={post} />)}
           </div>
-        </div>
+
+          {!isPageLoading && posts.length === 0 && (
+            <div className="p-3 border-3 border-double text-center flex flex-col gap-3 items-center">
+              <p className="text-sm font-bold">
+                No posts found matching your search criteria.
+              </p>
+            </div>
+          )}
+
+          {activeData && activeData.totalPages > 1 && (
+            <div className="flex items-center justify-between border-3 border-double p-3 mt-4">
+              <p className="text-xs font-bold opacity-70">
+                Showing Page {activeData.page} of {activeData.totalPages} (
+                {activeData.total} total posts)
+              </p>
+              <div className="flex gap-2">
+                <button
+                  disabled={page === 1 || isPageLoading}
+                  onClick={() =>
+                    updateURL("page", String(Math.max(1, page - 1)), false)
+                  }
+                  className="border-3 border-double px-3 py-1 text-xs font-bold hover:bg-primary hover:text-primary-foreground disabled:opacity-50 transition-colors"
+                >
+                  Prev
+                </button>
+                <button
+                  disabled={page === activeData.totalPages || isPageLoading}
+                  onClick={() => updateURL("page", String(page + 1), false)}
+                  className="border-3 border-double px-3 py-1 text-xs font-bold hover:bg-primary hover:text-primary-foreground disabled:opacity-50 transition-colors"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </section>
   );

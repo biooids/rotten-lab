@@ -1,3 +1,4 @@
+//src/components/pages/posts/PostDetails.tsx
 "use client";
 
 import React, { useState, useEffect } from "react";
@@ -143,11 +144,11 @@ export default function PostDetails({ postId }: { postId: string }) {
     }
   };
 
-  // FIXED: Safely bypass TS constraints and map exactly to the backend SQL aliases
-  const AUTHOR_NAME = (post as any)?.author_name || "protocols_farmer";
-  const AUTHOR_ROLE = (post as any)?.author_role || "Back end dev";
+  // Maps correctly to backend fields, without TS 'any' bypasses
+  const AUTHOR_NAME = post?.author_name || "protocols_farmer";
+  const AUTHOR_TITLE = post?.author_title || "Member";
   const AUTHOR_AVATAR =
-    (post as any)?.author_avatar ||
+    post?.author_avatar ||
     "https://res.cloudinary.com/dhr9zmb3i/image/upload/v1772941590/cat_kw8xmu.jpg";
 
   useEffect(() => {
@@ -317,15 +318,23 @@ export default function PostDetails({ postId }: { postId: string }) {
         {/* Author + Dates */}
         <div className="flex flex-col gap-3 pb-3 border-b-3 border-double">
           <div className="flex justify-between flex-wrap gap-3">
+            {/* MATCHED FLEX ITEMS-BASELINE ALIGNMENT HERE */}
             <div className="flex gap-2 items-center">
-              <div className="relative w-10 h-10">
+              <div className="relative w-10 h-10 shrink-0">
                 <SmartImage src={AUTHOR_AVATAR} alt={AUTHOR_NAME} isAvatar />
               </div>
-              <div className="flex flex-col">
-                <p className="text-primary font-bold text-sm">{AUTHOR_NAME}</p>
-                <p className="text-xs font-bold ">{AUTHOR_ROLE}</p>
+              <div className="flex flex-col justify-center flex-1 min-w-0">
+                <p className="text-primary flex items-baseline gap-2 line-clamp-1">
+                  <span className="font-bold text-sm truncate">
+                    {AUTHOR_NAME}
+                  </span>
+                  <span className="text-xs font-bold opacity-80 truncate">
+                    {AUTHOR_TITLE}
+                  </span>
+                </p>
               </div>
             </div>
+
             <div className="flex flex-col text-xs font-bold text-left sm:text-right justify-center">
               <p>
                 Created:{" "}

@@ -15,7 +15,7 @@ import type {
   JWTPayload,
 } from "./auth.types.js";
 import { mediaStorage } from "../../db/cloudinary.js";
-
+import busboy from "busboy";
 // --- ENVIRONMENT VALIDATION ---
 const ACCESS_TOKEN_SECRET = process.env["ACCESS_TOKEN_SECRET"];
 const ACCESS_TOKEN_EXPIRY_MINUTES = parseInt(
@@ -904,7 +904,7 @@ export const authController = {
         jwtErrName === "JsonWebTokenError" ||
         jwtErrMsg === "Invalid token type";
       process.stderr.write(
-        `[updateAccount] JWT Verify Error name=${jwtErrName} expired=${isExpired} invalid=${isInvalidSignature}: ${jwtErrMsg}\n`,
+        `[updateAccount] JWT Verify Error name=${jwtErrName} expired=${isExpired} invalid=${isInvalidSignature}: ${jwtErrMsg}\nStack: ${(err as Error).stack}\n`,
       );
       res.statusCode = 401;
       res.setHeader("Content-Type", "application/json");
@@ -947,21 +947,10 @@ export const authController = {
     }
 
     try {
-      const {
-        username,
-        profileTitle,
-        avatarBase64,
-        avatarUrl,
-        geminiApiKey,
-        claudeApiKey,
-      } = body;
+      const { username, profileTitle, avatarUrl, geminiApiKey, claudeApiKey } =
+        body;
 
-      // --- REGEX DEFINITIONS (Matching Zod Schema) ---
       const imageExtensions = /\.(jpeg|jpg|gif|png|webp|svg)(\?.*)?(#.*)?$/i;
-      const base64ImageRegex =
-        /^data:image\/(jpeg|jpg|png|webp|gif|svg\+xml);base64,/;
-
-      // --- EXPLICIT NODE.JS VALIDATION FOR NEW FIELDS ---
 
       // 1. Username Validation
       if (username !== undefined && username !== null) {
@@ -988,25 +977,7 @@ export const authController = {
         }
       }
 
-      // 3. Avatar Base64 Format Validation
-      if (
-        avatarBase64 !== undefined &&
-        avatarBase64 !== null &&
-        avatarBase64 !== ""
-      ) {
-        if (!base64ImageRegex.test(avatarBase64)) {
-          res.statusCode = 400;
-          res.end(
-            JSON.stringify({
-              error:
-                "Invalid base64 image format. Only image uploads are allowed.",
-            }),
-          );
-          return;
-        }
-      }
-
-      // 4. Avatar URL Strict Validation (Length + URL + Extension)
+      // 3. Avatar URL Strict Validation (Length + URL + Extension)
       if (avatarUrl !== undefined && avatarUrl !== null && avatarUrl !== "") {
         const trimmedUrl = avatarUrl.trim();
 
@@ -1021,8 +992,11 @@ export const authController = {
         }
 
         try {
-          new URL(trimmedUrl); // Native Node.js check for valid URL structure
-        } catch {
+          new URL(trimmedUrl);
+        } catch (err) {
+          process.stderr.write(
+            `[updateAccount] URL Parsing Error for string '${trimmedUrl}': ${(err as Error).message}\nStack: ${(err as Error).stack}\n`,
+          );
           res.statusCode = 400;
           res.end(
             JSON.stringify({
@@ -1044,36 +1018,12 @@ export const authController = {
         }
       }
 
-      // --- Cloudinary Upload Logic ---
       let finalAvatarUrl: string | null = null;
-
-      if (avatarBase64) {
-        try {
-          const uploadResult = await mediaStorage.uploader.upload(
-            avatarBase64,
-            {
-              folder: "portfolio",
-            },
-          );
-          finalAvatarUrl = uploadResult.secure_url;
-        } catch (uploadErr) {
-          process.stderr.write(
-            `[updateAccount] Cloudinary Upload FATAL Error: ${(uploadErr as Error).message}\nStack: ${(uploadErr as Error).stack}\n`,
-          );
-          res.statusCode = 500;
-          res.end(
-            JSON.stringify({
-              error:
-                "Failed to upload profile picture to Cloudinary. Please try again.",
-            }),
-          );
-          return;
-        }
-      } else if (avatarUrl) {
+      if (avatarUrl) {
         finalAvatarUrl = avatarUrl.trim();
       }
 
-      // 5. Manually update core user details if ANY of them are provided
+      // 4. Manually update core user details if ANY of them are provided
       if (username || profileTitle !== undefined || finalAvatarUrl !== null) {
         try {
           await authService.updateUser(
@@ -1120,7 +1070,7 @@ export const authController = {
         }
       }
 
-      // 6. Manually update API Keys if provided
+      // 5. Manually update API Keys if provided
       if (geminiApiKey !== undefined || claudeApiKey !== undefined) {
         try {
           await authService.updateApiKeys(
@@ -1143,7 +1093,7 @@ export const authController = {
         }
       }
 
-      // 7. Fetch the fresh user data to return back to Redux
+      // 6. Fetch the fresh user data to return back to Redux
       try {
         const updatedUserResult = await authService.findUserById(targetId);
 
@@ -1200,6 +1150,175 @@ export const authController = {
       );
     }
   },
+
+  async uploadAvatar(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      res.statusCode = 401;
+      res.end(JSON.stringify({ error: "Unauthorized" }));
+      return;
+    }
+
+    const token = authHeader.split(" ")[1];
+    let decoded: JWTPayload;
+    try {
+      decoded = jwt.verify(
+        token as string,
+        ACCESS_TOKEN_SECRET as string,
+      ) as JWTPayload;
+      if (decoded.token_use !== "access") throw new Error("Invalid token type");
+    } catch (err) {
+      const jwtErrName = (err as Error)?.name;
+      const jwtErrMsg = (err as Error)?.message || "";
+      const isExpired = jwtErrName === "TokenExpiredError";
+      const isInvalidSignature =
+        jwtErrName === "JsonWebTokenError" ||
+        jwtErrMsg === "Invalid token type";
+      process.stderr.write(
+        `[uploadAvatar] JWT Verify Error name=${jwtErrName} expired=${isExpired} invalid=${isInvalidSignature}: ${jwtErrMsg}\nStack: ${(err as Error).stack}\n`,
+      );
+      res.statusCode = 401;
+      res.setHeader("Content-Type", "application/json");
+      res.end(
+        JSON.stringify({
+          error: isExpired
+            ? "Access token expired. Please refresh and retry."
+            : isInvalidSignature
+              ? "Access token is invalid or tampered. Please log in again."
+              : "Unauthorized.",
+          code: isExpired
+            ? "TOKEN_EXPIRED"
+            : isInvalidSignature
+              ? "TOKEN_INVALID"
+              : "AUTH_UNKNOWN",
+        }),
+      );
+      return;
+    }
+
+    const url = new URL(req.url!, `http://${req.headers.host}`);
+    const targetId = url.searchParams.get("id") || decoded.id;
+
+    if (decoded.id !== targetId && decoded.role !== "super_admin") {
+      res.statusCode = 403;
+      res.end(JSON.stringify({ error: "Forbidden: Access denied." }));
+      return;
+    }
+
+    let bb;
+    try {
+      bb = busboy({ headers: req.headers });
+    } catch (err) {
+      process.stderr.write(
+        `[uploadAvatar] Busboy Initialization Error: ${(err as Error).message}\nStack: ${(err as Error).stack}\n`,
+      );
+      res.statusCode = 400;
+      res.end(JSON.stringify({ error: "Invalid form data headers." }));
+      return;
+    }
+
+    let fileFound = false;
+
+    bb.on("file", (_name, file, info) => {
+      fileFound = true;
+      try {
+        const { mimeType } = info;
+
+        if (!mimeType.startsWith("image/")) {
+          file.resume(); // drain the stream so busboy doesn't hang
+          if (!res.headersSent) {
+            res.statusCode = 400;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "Only image files are allowed." }));
+          }
+          return;
+        }
+
+        const uploadStream = mediaStorage.uploader.upload_stream(
+          { folder: "portfolio" },
+          (error, result) => {
+            if (error) {
+              process.stderr.write(
+                `[uploadAvatar] Cloudinary Upload Stream Error: ${error.message}\n`,
+              );
+              if (!res.headersSent) {
+                res.statusCode = 500;
+                res.setHeader("Content-Type", "application/json");
+                res.end(
+                  JSON.stringify({
+                    error: "Failed to upload image to Cloudinary.",
+                  }),
+                );
+              }
+              return;
+            }
+
+            if (result && result.secure_url) {
+              if (!res.headersSent) {
+                res.statusCode = 200;
+                res.setHeader("Content-Type", "application/json");
+                res.end(JSON.stringify({ url: result.secure_url }));
+              }
+            }
+          },
+        );
+
+        file.on("error", (err) => {
+          process.stderr.write(
+            `[uploadAvatar] Busboy File Stream Error: ${(err as Error).message}\nStack: ${(err as Error).stack}\n`,
+          );
+        });
+
+        file.pipe(uploadStream);
+      } catch (err) {
+        process.stderr.write(
+          `[uploadAvatar] Busboy File Event Processing Error: ${(err as Error).message}\nStack: ${(err as Error).stack}\n`,
+        );
+        if (!res.headersSent) {
+          res.statusCode = 500;
+          res.setHeader("Content-Type", "application/json");
+          res.end(
+            JSON.stringify({ error: "Server error during file processing." }),
+          );
+        }
+      }
+    });
+
+    bb.on("error", (err) => {
+      process.stderr.write(
+        `[uploadAvatar] Busboy Parse Error: ${(err as Error).message}\nStack: ${(err as Error).stack}\n`,
+      );
+      if (!res.headersSent) {
+        res.statusCode = 500;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ error: "Form parsing failed." }));
+      }
+    });
+
+    bb.on("finish", () => {
+      if (!fileFound && !res.headersSent) {
+        res.statusCode = 400;
+        res.setHeader("Content-Type", "application/json");
+        res.end(
+          JSON.stringify({ error: "No image file provided in the request." }),
+        );
+      }
+    });
+
+    try {
+      req.pipe(bb);
+    } catch (err) {
+      process.stderr.write(
+        `[uploadAvatar] Request Pipe Error: ${(err as Error).message}\nStack: ${(err as Error).stack}\n`,
+      );
+      if (!res.headersSent) {
+        res.statusCode = 500;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ error: "Failed to read request body." }));
+      }
+    }
+  },
+
   async deleteAccount(
     req: IncomingMessage,
     res: ServerResponse,

@@ -4,7 +4,9 @@ import { z } from "zod";
 const URL_REGEX = /^(https?:\/\/)?([\w\d\-_]+\.)+\.?[\w\d\-_]+(\/.*)?$/i;
 const GITHUB_REGEX =
   /^(https?:\/\/)?(www\.)?github\.com\/[\w\d\-_]+\/[\w\d\-_]+.*$/i;
-const IMAGE_REGEX = /\.(jpeg|jpg|gif|png|webp|avif)$/i;
+
+// Unified regex matching backend and Cloudinary supported formats
+const IMAGE_REGEX = /\.(jpeg|jpg|gif|png|webp|avif|svg)(\?.*)?(#.*)?$/i;
 
 export const postSchema = z
   .object({
@@ -27,7 +29,8 @@ export const postSchema = z
       .refine((url) => !url || URL_REGEX.test(url), {
         message: "Thumbnail must be a valid image URL.",
       })
-      .refine((url) => !url || IMAGE_REGEX.test(url.split("?")[0] ?? ""), {
+      // Removed the .split("?")[0] because our IMAGE_REGEX now explicitly handles queries
+      .refine((url) => !url || IMAGE_REGEX.test(url), {
         message: "Thumbnail must be a valid image URL.",
       }),
 
@@ -36,7 +39,7 @@ export const postSchema = z
         z
           .string()
           .max(2048, "Invalid or too long image URL in gallery.")
-          .refine((url) => !url || IMAGE_REGEX.test(url.split("?")[0] ?? ""), {
+          .refine((url) => !url || IMAGE_REGEX.test(url), {
             message: "Invalid or too long image URL in gallery.",
           }),
       )

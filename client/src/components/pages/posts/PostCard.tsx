@@ -1,4 +1,4 @@
-//src/components/pages/posts/PostCard.tsx
+// src/components/pages/posts/PostCard.tsx
 "use client";
 
 import React, { useEffect, useState } from "react";
@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import CornerFlourish from "../../shared/CornerFlourish";
 import { formatDistanceToNow } from "date-fns";
+import { Post } from "@/lib/features/posts/postsTypes";
 
 const SmartImage = ({
   src,
@@ -79,18 +80,18 @@ const SmartImage = ({
   );
 };
 
-export default function PostCard({ post }: { post: any }) {
+export default function PostCard({ post }: { post: Post }) {
   const visibleTags = post.tags?.slice(0, 3) || [];
   const remainingTags = (post.tags?.length || 0) - 3;
 
-  // FIXED: Safely bypass TS constraints and map exactly to the backend SQL aliases
-  const AUTHOR_NAME = (post as any)?.author_name || "protocols_farmer";
+  const AUTHOR_NAME = post.author_name || "protocols_farmer";
+  const AUTHOR_TITLE = post.author_title || "Member"; // CHANGED: Now pulling perfectly from backend
   const AUTHOR_AVATAR =
-    (post as any)?.author_avatar ||
+    post.author_avatar ||
     "https://res.cloudinary.com/dhr9zmb3i/image/upload/v1772941590/cat_kw8xmu.jpg";
 
   return (
-    <div className="relative border-3 border-double  flex flex-col gap-3 p-3 justify-between ">
+    <div className="relative border-3 border-double flex flex-col gap-3 p-3 justify-between">
       <CornerFlourish className="-top-1 -left-1" />
       <CornerFlourish className="-top-1 -right-1 rotate-90" />
       <CornerFlourish className="-bottom-1 -left-1 -rotate-90" />
@@ -104,7 +105,7 @@ export default function PostCard({ post }: { post: any }) {
 
         {/* Category + Subcategory (if exists) */}
         <div className="flex items-center gap-1 flex-wrap">
-          <span className="bg-primary text-primary-foreground  border-3 border-double font-bold p-1 w-fit text-xs">
+          <span className="bg-primary text-primary-foreground border-3 border-double font-bold p-1 w-fit text-xs">
             {post.category}
           </span>
           {post.subcategory && (
@@ -121,7 +122,7 @@ export default function PostCard({ post }: { post: any }) {
           )}
         </div>
 
-        {/* Content with Clamping - Mapped to backend fields */}
+        {/* Content with Clamping */}
         <div className="flex flex-col gap-1">
           <h4 className="text-primary font-bold line-clamp-1">{post.title}</h4>
           <p className="text-xs font-bold line-clamp-2">
@@ -132,14 +133,19 @@ export default function PostCard({ post }: { post: any }) {
       </div>
 
       <div className="flex flex-col gap-3">
-        {/* Author & Dates - Mapped to backend timestamps */}
-        <div className="flex gap-1">
-          <div className="relative w-10 h-10">
+        {/* Author & Dates */}
+        <div className="flex gap-2 items-center">
+          <div className="relative w-10 h-10 shrink-0">
             <SmartImage src={AUTHOR_AVATAR} alt={AUTHOR_NAME} isAvatar={true} />
           </div>
-          <div className="flex flex-col">
-            <p className="text-primary font-bold">{AUTHOR_NAME}</p>
-            <p className="text-xs opacity-80 font-bold">
+          <div className="flex flex-col justify-center flex-1 min-w-0">
+            <p className="text-primary flex items-baseline gap-2 line-clamp-1">
+              <span className="font-bold truncate">{AUTHOR_NAME}</span>
+              <span className="text-xs opacity-80 truncate">
+                {AUTHOR_TITLE}
+              </span>
+            </p>
+            <p className="text-[10px] opacity-80 font-bold line-clamp-1 mt-0.5">
               C:{" "}
               {formatDistanceToNow(new Date(post.created_at), {
                 addSuffix: true,

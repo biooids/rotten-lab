@@ -1,4 +1,3 @@
-//src/features/auth/auth.routes.ts
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { authController } from "./auth.controller.js";
 
@@ -42,6 +41,10 @@ export const authRoutes = async ({
   }
   if (pathname === "/api/v1/auth/update" && req.method === "PATCH") {
     await authController.updateAccount(req, res);
+    return true;
+  }
+  if (pathname === "/api/v1/auth/upload-avatar" && req.method === "POST") {
+    await authController.uploadAvatar(req, res);
     return true;
   }
   if (pathname === "/api/v1/auth/delete" && req.method === "DELETE") {
