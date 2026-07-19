@@ -8,6 +8,7 @@ import type {
   UpdateRoleRequest,
   AuditLog,
   SecurityBan,
+  UpdateAiAccessRequest,
 } from "./adminTypes";
 
 export const adminApiSlice = createApi({
@@ -27,6 +28,18 @@ export const adminApiSlice = createApi({
     >({
       query: (data) => ({
         url: "/admin/role",
+        method: "PATCH",
+        body: data,
+      }),
+      invalidatesTags: ["AdminUser", "AuditLog"],
+    }),
+
+    updateUserAiAccess: builder.mutation<
+      { message: string; user: AdminUser },
+      UpdateAiAccessRequest
+    >({
+      query: (data) => ({
+        url: "/admin/ai-access",
         method: "PATCH",
         body: data,
       }),
@@ -99,6 +112,7 @@ export const adminApiSlice = createApi({
 export const {
   useGetUsersQuery,
   useUpdateUserRoleMutation,
+  useUpdateUserAiAccessMutation,
   useDeleteUserMutation,
   useGetMaintenanceQuery,
   useUpdateMaintenanceMutation,

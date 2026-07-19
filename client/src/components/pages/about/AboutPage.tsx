@@ -10,33 +10,40 @@ import AboutDiary from "@/components/pages/about/AboutDiary";
 const timeline = [
   {
     date: "Aug 2023",
-    label: "High School Ends",
+    label: "High School Graduation",
     detail:
-      "Physics, Chemistry, Biology. Finished curious about computers and biology. A-level planted the seed.",
+      "Graduated with Physics, Chemistry, and Biology as main subjects with sub-math and E-ship. I left high school fascinated by both biology and computers, and that curiosity became the starting point of everything that followed.",
   },
   {
     date: "2023–2024",
-    label: "Self-Taught Dev Begins",
+    label: "Tutorial hell Developer",
     detail:
-      "HTML, CSS, JS, Node.js, Express.js. Built note apps, a React house rent site (didn't even know React). Thought it would impress admission officers.",
+      "Started learning HTML, CSS, JavaScript, Node.js, Mongodb, and Express.js. Built every thing from videos and youtube like boring note-taking apps and even recreated a house-rental website using React before I fully understood the framework, hoping my projects would strengthen my college applications.",
   },
   {
     date: "2023–2025",
-    label: "The College Rejection Era",
+    label: "Years of College Rejections",
     detail:
-      "Common App, 20+ rejections. Re-applied in 2024. 3 half-scholarships I couldn't afford. Applied for bio+computer research dreams. Rejected again April 1, 2025.",
+      "Applied through the Common App and external applications. I received more than 80+ rejections. I received three partial scholarships that were still financially out of reach. I kept pursuing my dream of combining biology and computing in research, but my final application cycle ended with another rejection on April 1, 2025.",
   },
   {
     date: "Late 2025",
-    label: "ALU Admission, No Aid",
+    label: "ALU Admission Without Financial Aid",
     detail:
-      "Admitted to ALU Rwanda. Deferred for May intake. Country denied financial aid—after I found a vulnerability on their aid site. They fixed it, gave nothing. Still a vulnerability exists.",
+      "I decided to apply for local universities and Earned admission to ALU Rwanda and deferred to the May intake. I was denied for full financial aid and also denied for student loan even after responsibly reporting a vulnerability in the government website for the financial loan system that was later fixed. Despite the setback, I remained committed to continuing my education.",
   },
   {
     date: "May 2026",
-    label: "Now: ALU Student",
+    label: "Current Chapter: ALU Student",
     detail:
-      "Bachelor's in Entrepreneurial Leadership (they refused Software Engineering—no math background). Math test in June to qualify for the field I deserve.",
+      "Currently pursuing a Bachelor's in Entrepreneurial Leadership after being unable to enroll directly in Software Engineering because of my mathematics background. But thankfully I did a math test and won and now they claim am a qualified Software Engineering student. I mean come on really ? it's been 3 years in this field and after some 20 questions probability math test they claim am qualified for Software Engineering. I mean come on really ?",
+  },
+
+  {
+    date: "Aug 2026 – Present",
+    label: "I Finally Found My Direction",
+    detail:
+      "After years of trying to figure out where I belonged, I committed to becoming a Site Reliability Engineer. I'm now grinding Linux, Bash, C for systems fundamentals, Go as my professional language, Node.js and TypeScript for building products, PostgreSQL for data, Docker and Kubernetes for infrastructure, and Rust whenever low-level performance matters. Everything I learn now is aimed at becoming an exceptional backend and infrastructure engineer.",
   },
 ];
 
@@ -69,26 +76,33 @@ export default function AboutPage() {
 
         <div className="border-l-3 border-double pl-3 flex flex-col gap-6">
           {timeline.map((entry, i) => (
-            <div key={i} className="flex flex-col gap-1">
-              <span className="text-primary font-bold ">{entry.date}</span>
-              <span className="font-bold">{entry.label}</span>
-              <p className="text-sm ">{entry.detail}</p>
+            <div key={i} className="flex flex-col gap-3">
+              <div className="flex flex-col">
+                <span className="text-primary font-bold">{entry.date}</span>
+                <span className="font-bold">{entry.label}</span>
+              </div>
+              <p className="text-sm">{entry.detail}</p>
             </div>
           ))}
         </div>
 
         <div className="border-l-3 border-double pl-3 flex flex-col gap-1">
-          <span className=" font-bold text-primary">
+          <span className="font-bold text-primary">
             Plane story (Unfiltered)
           </span>
-          <span className="font-bold ">
-            This is the whole story about my life from childhood to now
+          <span className="font-bold">
+            If you want my whole story about my life from childhood to now{" "}
+            <Link href="/contact" className="text-primary underline">
+              Contact me
+            </Link>{" "}
+            or read some in below diary.
           </span>
         </div>
       </div>
 
       {/* Diary */}
       <AboutDiary />
+
       {/* Projects*/}
       <HomeProjects />
 
@@ -101,6 +115,7 @@ export default function AboutPage() {
         >
           <Link href="/contact">Contact Me</Link>
         </Button>
+
         <Button
           asChild
           variant="outline"
@@ -114,7 +129,9 @@ export default function AboutPage() {
           variant="outline"
           className="border-3 border-double rounded-none"
         >
-          <Link href="/contact">Download CV</Link>
+          <a href="/cv.pdf" download>
+            Download CV
+          </a>
         </Button>
       </div>
 
@@ -128,11 +145,13 @@ export default function AboutPage() {
         </h4>
 
         <div className="border-l-3 border-double pl-3 flex flex-col gap-1">
-          <span className=" font-bold text-primary">
+          <span className="font-bold text-primary">
             What am i chasing now and future plans :
           </span>
           <p className="text-sm">
-            I am chasing a career in software engineering, but I am also
+            I am chasing a career in software engineering and I still have a
+            light spark for biology, but I am also interested in contributing to
+            open-source projects and continuously improving my skills.
           </p>
         </div>
       </div>

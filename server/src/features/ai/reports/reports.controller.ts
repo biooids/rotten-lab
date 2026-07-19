@@ -183,6 +183,9 @@ export const reportsController = {
   },
 
   // --- 3. SEND CHAT MESSAGE ---
+  // ==============================================================================
+  // METHOD START: sendMessage (in reports.controller.ts)
+  // ==============================================================================
   async sendMessage(
     req: IncomingMessage,
     res: ServerResponse,
@@ -330,7 +333,7 @@ export const reportsController = {
         return;
       }
 
-      // ADDED: Explicit interception block to handle standard users lacking BYOK when global access is off
+      // MODIFIED: Explicit interception block updated to reflect granular AI Access checks
       if (err.message && err.message.includes("MISSING_BYOK")) {
         process.stderr.write(
           `[HTTP_SHIELD] Rejected standard user chat message: ${err.message}\n`,
@@ -339,7 +342,7 @@ export const reportsController = {
         res.end(
           JSON.stringify({
             error:
-              "Access Denied: Global access is disabled. You must configure a valid API key in your Account Settings to perform chats.",
+              "Access Denied: You do not have permission to use the system AI engine. You must configure a valid API key in your Account Settings to perform chats.",
           }),
         );
         return;

@@ -272,6 +272,7 @@ export const reportsService = {
   },
 
   // --- 3. PROCESS NEW CHAT MESSAGE ---
+
   async processChatMessage(
     reportId: string,
     userId: string,
@@ -310,15 +311,17 @@ export const reportsService = {
 
     const { target_url, ai_provider } = reportRes.rows[0];
 
-    // --- ADDED: BYOK & FALLBACK KEY RESOLUTION LOGIC ---
+    // --- ADDED: BYOK, GLOBAL, AND GRANULAR ACCESS RESOLUTION LOGIC ---
     let activeClient: any;
     try {
       const encryptionKey = process.env["DB_ENCRYPTION_KEY"] as string;
 
-      // MODIFIED: Parameterized $3 for ai_provider to fix Postgres errors, and added global fallback lookups from system_settings
+      // MODIFIED: Added u.prefer_system_ai_key alongside has_system_ai_access for granular chat control
       const userKeySql = `
         SELECT 
           u.role,
+          u.has_system_ai_access,
+          u.prefer_system_ai_key,
           CASE 
             WHEN ($3 = 'claude' AND u.claude_api_key IS NOT NULL AND u.claude_api_key <> '') 
             THEN pgp_sym_decrypt(dearmor(u.claude_api_key), $2) 
@@ -345,7 +348,38 @@ export const reportsService = {
 
       const userRow = keyRes.rows[0];
 
-      if (userRow.decrypted_key) {
+      // ADDED: Verbose boolean flags for clear, readable routing logic
+      const isAdmin =
+        userRow.role === "admin" || userRow.role === "super_admin";
+      const hasSystemAccessClaude =
+        userRow.allow_global_claude === true ||
+        userRow.has_system_ai_access === true;
+      const hasSystemAccessGemini =
+        userRow.allow_global_gemini === true ||
+        userRow.has_system_ai_access === true;
+
+      let isSystemAllowed = false;
+      if (ai_provider === "claude") {
+        isSystemAllowed = isAdmin || hasSystemAccessClaude;
+      } else if (ai_provider === "gemini") {
+        isSystemAllowed = isAdmin || hasSystemAccessGemini;
+      }
+
+      // MODIFIED: Flipped the priority logic. System key preference + Authorization takes top priority.
+      if (userRow.prefer_system_ai_key === true && isSystemAllowed) {
+        process.stdout.write(
+          `[CHAT_AUTH] User ${userId} prefers system key and is authorized. Routing to global environment AI client for ${ai_provider}.\n`,
+        );
+        activeClient =
+          ai_provider === "claude" ? globalAnthropicClient : globalGeminiClient;
+        if (!activeClient) {
+          throw new Error(
+            `AI_CLIENT_NOT_CONFIGURED: User prefers system key, but server lacks .env key for ${ai_provider}.`,
+          );
+        }
+      }
+      // MODIFIED: Fallback 1 - If they don't prefer the system key (or aren't allowed), check if they have a personal key
+      else if (userRow.decrypted_key) {
         // STANDARD USER / OVERRIDE: BYOK
         process.stdout.write(
           `[CHAT_AUTH] Spawning dynamic AI client using custom BYOK for user ${userId}.\n`,
@@ -354,10 +388,12 @@ export const reportsService = {
           ai_provider === "claude"
             ? new Anthropic({ apiKey: userRow.decrypted_key })
             : new GoogleGenAI({ apiKey: userRow.decrypted_key });
-      } else if (userRow.role === "admin" || userRow.role === "super_admin") {
+      }
+      // MODIFIED: Fallback 2 - No personal key, check if they are an admin as a last resort
+      else if (isAdmin) {
         // ADMIN: Global ENV key
         process.stdout.write(
-          `[CHAT_AUTH] Routing to global environment AI client for admin ${userId}.\n`,
+          `[CHAT_AUTH] Routing to global environment AI client for admin ${userId} as fallback.\n`,
         );
         activeClient =
           ai_provider === "claude" ? globalAnthropicClient : globalGeminiClient;
@@ -366,13 +402,11 @@ export const reportsService = {
             "AI_CLIENT_NOT_CONFIGURED: Admin lacks BYOK and server lacks .env key.",
           );
         }
-      } else if (
-        ai_provider === "claude" &&
-        userRow.allow_global_claude === true
-      ) {
-        // ADDED: STANDARD USER FALLBACK TO GLOBAL CLAUDE
+      }
+      // MODIFIED: Fallback 3 - No personal key, check if standard user has global/system access for Claude
+      else if (ai_provider === "claude" && hasSystemAccessClaude) {
         process.stdout.write(
-          `[CHAT_AUTH] Routing to global environment AI client for standard user ${userId} via system_settings permission (Claude).\n`,
+          `[CHAT_AUTH] Routing to global environment AI client for standard user ${userId} via system_settings & individual permissions (Claude) as fallback.\n`,
         );
         activeClient = globalAnthropicClient;
         if (!activeClient) {
@@ -380,13 +414,11 @@ export const reportsService = {
             "AI_CLIENT_NOT_CONFIGURED: System allows global Claude, but server lacks .env key.",
           );
         }
-      } else if (
-        ai_provider === "gemini" &&
-        userRow.allow_global_gemini === true
-      ) {
-        // ADDED: STANDARD USER FALLBACK TO GLOBAL GEMINI
+      }
+      // MODIFIED: Fallback 4 - No personal key, check if standard user has global/system access for Gemini
+      else if (ai_provider === "gemini" && hasSystemAccessGemini) {
         process.stdout.write(
-          `[CHAT_AUTH] Routing to global environment AI client for standard user ${userId} via system_settings permission (Gemini).\n`,
+          `[CHAT_AUTH] Routing to global environment AI client for standard user ${userId} via system_settings & individual permissions (Gemini) as fallback.\n`,
         );
         activeClient = globalGeminiClient;
         if (!activeClient) {
@@ -394,10 +426,12 @@ export const reportsService = {
             "AI_CLIENT_NOT_CONFIGURED: System allows global Gemini, but server lacks .env key.",
           );
         }
-      } else {
+      }
+      // MODIFIED: Final Fallback - Deny access
+      else {
         // FATAL: Standard user, no key, no permission.
         throw new Error(
-          `MISSING_BYOK: Standard user lacks personal key and global access for ${ai_provider} is disabled.`,
+          `MISSING_BYOK: Standard user lacks personal key and individual/global access for ${ai_provider} is disabled.`,
         );
       }
     } catch (err: any) {

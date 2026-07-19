@@ -5,6 +5,8 @@ export interface AdminUser {
   id: string;
   username: string;
   role: UserRole;
+  has_system_ai_access: boolean;
+  prefer_system_ai_key: boolean; // ADDED
   created_at: string;
   updated_at: string;
 }
@@ -43,4 +45,9 @@ export interface SecurityBan {
   type: "IP" | "USERNAME";
   target: string;
   remainingSeconds: number;
+}
+export interface UpdateAiAccessRequest {
+  targetUserId: string;
+  hasAccess: boolean;
+  preferSystemKey: boolean; // ADDED
 }

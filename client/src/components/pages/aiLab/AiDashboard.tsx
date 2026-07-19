@@ -157,7 +157,7 @@ export default function AiDashboard() {
 
           {historyError ? (
             <div className="border-3 border-double border-destructive p-4 bg-destructive/10 flex flex-col gap-2">
-              <span className="text-xs font-bold text-destructive uppercase">
+              <span className="text-xs font-bold text-destructive">
                 Could not load scan history
               </span>
               <p className="text-xs font-bold opacity-80">
@@ -197,7 +197,7 @@ export default function AiDashboard() {
                         <div className="flex items-center gap-2 flex-wrap">
                           <span
                             className={cn(
-                              "text-[9px] font-bold border-3 border-double px-1.5 py-0.5 uppercase",
+                              "text-sm font-bold border-3 border-double px-1.5 py-0.5",
                               activeEngine === "claude"
                                 ? "text-orange-500 border-orange-500"
                                 : "text-blue-500 border-blue-500",
@@ -206,15 +206,15 @@ export default function AiDashboard() {
                             {activeEngine}
                           </span>
                           {report.ai_model && (
-                            <span className="text-[9px] font-bold border-3 border-double px-1.5 py-0.5 uppercase opacity-70">
+                            <span className="text-sm   font-bold border-3 border-double px-1.5 py-0.5 opacity-70">
                               {report.ai_model}
                             </span>
                           )}
-                          <span className="text-xs font-bold truncate max-w-[200px] sm:max-w-xs group-hover:text-primary transition-colors">
+                          <span className="text-sm font-bold truncate max-w-[200px] sm:max-w-xs group-hover:text-primary transition-colors">
                             {report.target_url}
                           </span>
                         </div>
-                        <span className="text-[10px] font-bold opacity-70">
+                        <span className="text-sm font-bold opacity-70">
                           {new Date(report.created_at).toLocaleString()} | Type:{" "}
                           {report.scan_type}
                         </span>
@@ -223,7 +223,7 @@ export default function AiDashboard() {
                       <div className="flex items-center gap-4">
                         <span
                           className={cn(
-                            "text-[10px] font-bold  border-3 border-double px-2 py-1",
+                            "text-sm font-bold  border-3 border-double px-2 py-1",
                             report.status === "failed"
                               ? "text-destructive border-destructive"
                               : report.status === "completed"

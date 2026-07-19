@@ -339,14 +339,46 @@ export const postsService = {
     }
   },
 
-  // --- NEW EXPLICIT METHOD TO FETCH TAGS SPECIFIC TO A CATEGORY ---
-  async getAllUniqueTags(category: string | null = null) {
+  // --- NEW EXPLICIT METHOD TO FETCH TAGS SPECIFIC TO A CATEGORY AND SUBCATEGORY ---
+  async getAllUniqueTags(
+    category: string | null = null,
+    subcategory: string | null = null,
+    authorId: string | null = null,
+  ) {
     try {
       let sql = "";
       let values: any[] = [];
 
-      // Only apply the category WHERE clause if it exists and is not 'all'
-      if (category && category !== "all" && category.trim() !== "") {
+      const hasCat = category && category !== "all" && category.trim() !== "";
+      const hasSub = subcategory && subcategory.trim() !== "";
+      const hasAuth = authorId && authorId.trim() !== "";
+
+      // Verbose Philosophy: Explicitly declare the exact SQL string for every possible combination
+      if (hasCat && hasSub && hasAuth) {
+        sql = `
+          SELECT DISTINCT unnest(tags) AS tag 
+          FROM posts 
+          WHERE category = $1 AND subcategory = $2 AND author_id = $3
+          ORDER BY tag ASC;
+        `;
+        values.push(category.trim(), subcategory.trim(), authorId.trim());
+      } else if (hasCat && hasSub && !hasAuth) {
+        sql = `
+          SELECT DISTINCT unnest(tags) AS tag 
+          FROM posts 
+          WHERE category = $1 AND subcategory = $2
+          ORDER BY tag ASC;
+        `;
+        values.push(category.trim(), subcategory.trim());
+      } else if (hasCat && !hasSub && hasAuth) {
+        sql = `
+          SELECT DISTINCT unnest(tags) AS tag 
+          FROM posts 
+          WHERE category = $1 AND author_id = $2
+          ORDER BY tag ASC;
+        `;
+        values.push(category.trim(), authorId.trim());
+      } else if (hasCat && !hasSub && !hasAuth) {
         sql = `
           SELECT DISTINCT unnest(tags) AS tag 
           FROM posts 
@@ -354,6 +386,14 @@ export const postsService = {
           ORDER BY tag ASC;
         `;
         values.push(category.trim());
+      } else if (!hasCat && !hasSub && hasAuth) {
+        sql = `
+          SELECT DISTINCT unnest(tags) AS tag 
+          FROM posts 
+          WHERE author_id = $1
+          ORDER BY tag ASC;
+        `;
+        values.push(authorId.trim());
       } else {
         sql = `
           SELECT DISTINCT unnest(tags) AS tag 

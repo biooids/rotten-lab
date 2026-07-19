@@ -199,10 +199,12 @@ export const claudeService = {
     try {
       const encryptionKey = process.env["DB_ENCRYPTION_KEY"] as string;
 
-      // MODIFIED: Updated SQL to manually select allow_global_claude from system_settings directly in this query
+      // MODIFIED: Updated SQL to fetch individual ai access, global ai access, AND prefer_system_ai_key simultaneously
       const userKeySql = `
         SELECT 
           u.role,
+          u.has_system_ai_access,
+          u.prefer_system_ai_key,
           CASE 
             WHEN u.claude_api_key IS NOT NULL AND u.claude_api_key <> '' 
             THEN pgp_sym_decrypt(dearmor(u.claude_api_key), $2) 
@@ -222,7 +224,28 @@ export const claudeService = {
 
       const userRow = keyRes.rows[0];
 
-      if (userRow.decrypted_key) {
+      // ADDED: Verbose boolean flags for clear, readable routing logic
+      const isAdmin =
+        userRow.role === "admin" || userRow.role === "super_admin";
+      const hasSystemAccess =
+        userRow.has_system_ai_access === true ||
+        userRow.allow_global_claude === true;
+      const isSystemAllowed = isAdmin || hasSystemAccess;
+
+      // MODIFIED: Flipped the priority logic. System key preference + Authorization takes top priority.
+      if (userRow.prefer_system_ai_key === true && isSystemAllowed) {
+        if (!globalAnthropicClient) {
+          throw new Error(
+            "User prefers system key and is authorized, but server is missing default ANTHROPIC_API_KEY in environment variables.",
+          );
+        }
+        activeAnthropicClient = globalAnthropicClient;
+        process.stdout.write(
+          `[CLAUDE_AUTH] User ${adminId} prefers system key and is authorized. Routing to global environment AI client.\n`,
+        );
+      }
+      // MODIFIED: Fallback 1 - If they don't prefer the system key (or aren't allowed), check if they have a personal key
+      else if (userRow.decrypted_key) {
         // STANDARD USER (OR ADMIN OVERRIDE): Instantiate a dynamic client using their personal key
         activeAnthropicClient = new Anthropic({
           apiKey: userRow.decrypted_key,
@@ -230,7 +253,9 @@ export const claudeService = {
         process.stdout.write(
           `[CLAUDE_AUTH] Spawning dynamic AI client using custom BYOK for user ${adminId}.\n`,
         );
-      } else if (userRow.role === "admin" || userRow.role === "super_admin") {
+      }
+      // MODIFIED: Fallback 2 - No personal key, check if they are an admin as a last resort
+      else if (isAdmin) {
         // ADMIN: Use the global .env client for easy access
         if (!globalAnthropicClient) {
           throw new Error(
@@ -239,10 +264,12 @@ export const claudeService = {
         }
         activeAnthropicClient = globalAnthropicClient;
         process.stdout.write(
-          `[CLAUDE_AUTH] Routing to global environment AI client for admin ${adminId}.\n`,
+          `[CLAUDE_AUTH] Routing to global environment AI client for admin ${adminId} as fallback.\n`,
         );
-      } else if (userRow.allow_global_claude === true) {
-        // ADDED: STANDARD USER FALLBACK TO GLOBAL KEY IF PERMITTED BY SYSTEM SETTINGS
+      }
+      // MODIFIED: Fallback 3 - No personal key, check if standard user has global/system access as a last resort
+      else if (hasSystemAccess) {
+        // STANDARD USER FALLBACK TO GLOBAL KEY ONLY IF INDIVIDUAL ACCESS AND SYSTEM ACCESS ARE GRANTED
         if (!globalAnthropicClient) {
           throw new Error(
             "System setting allows global Claude, but ANTHROPIC_API_KEY is missing from environment variables.",
@@ -250,11 +277,13 @@ export const claudeService = {
         }
         activeAnthropicClient = globalAnthropicClient;
         process.stdout.write(
-          `[CLAUDE_AUTH] Routing to global environment AI client for standard user ${adminId} via system_settings permission.\n`,
+          `[CLAUDE_AUTH] Routing to global environment AI client for standard user ${adminId} via granted individual and system permissions as fallback.\n`,
         );
-      } else {
+      }
+      // MODIFIED: Final Fallback - Deny access
+      else {
         throw new Error(
-          "Access Denied: Standard users must provide their own Claude API key in Account Settings, and global access is currently disabled.",
+          "Access Denied: Standard users must provide their own Claude API key in Account Settings, or global access is disabled.",
         );
       }
     } catch (keyErr: any) {
@@ -649,9 +678,11 @@ export const claudeService = {
       // 1. Test Database & Decryption
       const encryptionKey = process.env["DB_ENCRYPTION_KEY"] as string;
 
-      // MODIFIED: Added system_settings select to check allow_global_claude manually
+      // MODIFIED: Added prefer_system_ai_key to the fetch query alongside individual AI access and global system setting
       const userKeySql = `
         SELECT u.role,
+        u.has_system_ai_access,
+        u.prefer_system_ai_key,
         CASE 
           WHEN u.claude_api_key IS NOT NULL AND u.claude_api_key <> '' 
           THEN pgp_sym_decrypt(dearmor(u.claude_api_key), $2) 
@@ -668,8 +699,30 @@ export const claudeService = {
 
       const userRow = keyRes.rows[0];
 
+      // ADDED: Verbose boolean flags for checking authorization
+      const isAdmin =
+        userRow.role === "admin" || userRow.role === "super_admin";
+      const hasSystemAccess =
+        userRow.has_system_ai_access === true ||
+        userRow.allow_global_claude === true;
+      const isSystemAllowed = isAdmin || hasSystemAccess;
+
       // 2. Resolve the Key
-      if (userRow.decrypted_key) {
+      // MODIFIED: Flipped the priority logic. System key preference + Authorization takes top priority.
+      if (userRow.prefer_system_ai_key === true && isSystemAllowed) {
+        if (!globalAnthropicClient) {
+          throw new Error(
+            "SYSTEM_KEY_MISSING: User prefers system key and is authorized, but server lacks .env key.",
+          );
+        }
+        activeAnthropicClient = globalAnthropicClient;
+        source = "SYSTEM_DEFAULT_PREFERRED";
+        process.stdout.write(
+          `[CLAUDE_TEST] User prefers system key and is authorized. Routing to global environment AI client.\n`,
+        );
+      }
+      // MODIFIED: Fallback 1 - Personal Key
+      else if (userRow.decrypted_key) {
         activeAnthropicClient = new Anthropic({
           apiKey: userRow.decrypted_key,
         });
@@ -677,7 +730,9 @@ export const claudeService = {
         process.stdout.write(
           `[CLAUDE_TEST] Successfully decrypted BYOK for user.\n`,
         );
-      } else if (userRow.role === "admin" || userRow.role === "super_admin") {
+      }
+      // MODIFIED: Fallback 2 - Admin default
+      else if (isAdmin) {
         if (!globalAnthropicClient) {
           throw new Error(
             "SYSTEM_KEY_MISSING: Admin lacks BYOK and server lacks .env key.",
@@ -686,10 +741,12 @@ export const claudeService = {
         activeAnthropicClient = globalAnthropicClient;
         source = "SYSTEM_DEFAULT";
         process.stdout.write(
-          `[CLAUDE_TEST] Using system default .env key for Admin.\n`,
+          `[CLAUDE_TEST] Using system default .env key for Admin as fallback.\n`,
         );
-      } else if (userRow.allow_global_claude === true) {
-        // ADDED: Global fallback for standard users based on admin permission
+      }
+      // MODIFIED: Fallback 3 - System Granted default
+      else if (hasSystemAccess) {
+        // Global fallback for standard users based on individual AND system permission
         if (!globalAnthropicClient) {
           throw new Error(
             "SYSTEM_KEY_MISSING: System allows global Claude, but server lacks .env key.",
@@ -698,11 +755,13 @@ export const claudeService = {
         activeAnthropicClient = globalAnthropicClient;
         source = "SYSTEM_DEFAULT_GRANTED";
         process.stdout.write(
-          `[CLAUDE_TEST] Using system default .env key for standard user via granted permission.\n`,
+          `[CLAUDE_TEST] Using system default .env key for standard user via granted permission as fallback.\n`,
         );
-      } else {
+      }
+      // MODIFIED: Final Fallback - Deny access
+      else {
         throw new Error(
-          "MISSING_BYOK: Standard user has no configured API key, and global access is disabled.",
+          "MISSING_BYOK: Standard user has no configured API key, or individual/global access is disabled.",
         );
       }
 
@@ -743,6 +802,9 @@ export const claudeService = {
     } catch (err: any) {
       process.stderr.write(
         `[CLAUDE_TEST_FATAL] Telemetry failed: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
       );
       throw err;
     }

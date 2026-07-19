@@ -151,13 +151,24 @@ export default function AllPosts() {
     sortOrder,
   });
 
-  const { data: globalTagsData } = useGetAllTagsQuery();
+  // --- FETCH CONTEXTUAL TAGS FIX ---
+  // Pass the activeCategory and activeSubcategory so tags filter contextually
+  const {
+    data: globalTagsData,
+    isLoading: isTagsLoading, // <-- NEW
+    isError: isTagsError,
+  } = useGetAllTagsQuery({
+    category: activeCategory !== "all" ? activeCategory : null,
+    subcategory: activeSubcategory || null,
+  });
 
   const isPageLoading = isLoading || isFetching;
   const posts = activeData?.posts || [];
   const allAvailableTags = globalTagsData?.tags || [];
 
+  // --- ADDED "all" TO CATEGORIES ARRAY FIX ---
   const allCategories = [
+    "all",
     "bio-engineering",
     "computer-science",
     "diary",
@@ -187,7 +198,7 @@ export default function AllPosts() {
         toggleTag={handleToggleTag}
         allAvailableTags={allAvailableTags}
         allCategories={allCategories}
-        selectedCategory={activeCategory === "all" ? "" : activeCategory}
+        selectedCategory={activeCategory}
         setSelectedCategory={handleSetCategory}
         showCategoryFilter={true}
         showSubcategoryFilter={true}
@@ -198,6 +209,8 @@ export default function AllPosts() {
         sortOrder={sortOrder}
         setSortOrder={handleSetSortOrder}
         clearAllFilters={handleClearFilters}
+        isTagsLoading={isTagsLoading} // <-- NEW
+        isTagsError={isTagsError} // <-- NEW
       />
 
       {isError ? (

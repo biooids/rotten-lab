@@ -17,7 +17,7 @@ export default function AppLayout({
       {sidebar}
       <div>
         {header}
-        <main className="flex-1 p-3 lg:p-6">{children}</main>
+        <main className="flex-1 p-3 lg:p-6 max-w-7xl mx-auto">{children}</main>
         {footer}
       </div>
       <MobileBottomBar />

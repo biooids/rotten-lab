@@ -37,14 +37,12 @@ export default function ClaudeModelPicker({
                   : "border-foreground/30 opacity-70 hover:opacity-100 hover:border-primary",
               )}
             >
-              <span className="text-xs font-bold uppercase">{m.label}</span>
-              <span className="text-[10px] font-bold opacity-80">
-                {m.tagline}
-              </span>
-              <span className="text-[10px] font-bold opacity-70 leading-snug">
+              <span className="text-sm font-bold ">{m.label}</span>
+              <span className="text-sm font-bold opacity-80">{m.tagline}</span>
+              <span className="text-sm font-bold opacity-70 leading-snug">
                 {m.strengths}
               </span>
-              <span className="text-[10px] font-bold opacity-50 leading-snug">
+              <span className="text-sm font-bold opacity-50 leading-snug">
                 {m.tradeoff}
               </span>
             </button>

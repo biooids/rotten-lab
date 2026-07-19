@@ -8,10 +8,11 @@ import CornerFlourish from "@/components/shared/CornerFlourish";
 import {
   useGetUsersQuery,
   useUpdateUserRoleMutation,
-  useRevokeSessionsMutation,
+  useUpdateUserAiAccessMutation, // ADDED: Import new AI mutation
 } from "@/lib/features/admin/adminApiSlice";
 import type { UserRole } from "@/lib/features/auth/authTypes";
 import DeleteUserModal from "./DeleteUserModal";
+import RevokeSessionsModal from "./RevokeSessionsModal";
 import {
   Select,
   SelectContent,
@@ -27,12 +28,20 @@ interface Props {
 }
 
 export default function UserDirectory({ currentUserId, showToast }: Props) {
-  const { data, isLoading } = useGetUsersQuery();
+  // MODIFIED: Destructured isError
+  const { data, isLoading, isError } = useGetUsersQuery();
   const [updateRole] = useUpdateUserRoleMutation();
-  const [revokeSessions] = useRevokeSessionsMutation();
+  const [updateAiAccess] = useUpdateUserAiAccessMutation(); // ADDED: Hook initialization
 
   const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
-  const [revokingUserId, setRevokingUserId] = useState<string | null>(null);
+  const [updatingAiUserId, setUpdatingAiUserId] = useState<string | null>(null); // ADDED: Separate loading state for AI toggle
+
+  const [showRevokeModal, setShowRevokeModal] = useState(false);
+  const [revokeTargetUser, setRevokeTargetUser] = useState<{
+    id: string;
+    username: string;
+  } | null>(null);
+
   const [targetUser, setTargetUser] = useState<{
     id: string;
     username: string;
@@ -51,23 +60,16 @@ export default function UserDirectory({ currentUserId, showToast }: Props) {
     }
   };
 
-  const handleRevokeSessions = async (userId: string) => {
-    if (
-      !window.confirm(
-        "CRITICAL WARNING: This will forcefully terminate all active sessions for this user. Are you sure?",
-      )
-    ) {
-      return;
-    }
-
-    setRevokingUserId(userId);
+  // ADDED: Explicit handler for AI Access changes
+  const handleAiAccessChange = async (userId: string, hasAccess: boolean) => {
+    setUpdatingAiUserId(userId);
     try {
-      const result = await revokeSessions(userId).unwrap();
-      showToast(result.message, "success");
+      await updateAiAccess({ targetUserId: userId, hasAccess }).unwrap();
+      showToast("System AI Access updated successfully.", "success");
     } catch (err) {
-      showToast("Failed to revoke sessions.", "error");
+      showToast("Failed to update AI Access.", "error");
     } finally {
-      setRevokingUserId(null);
+      setUpdatingAiUserId(null);
     }
   };
 
@@ -87,6 +89,8 @@ export default function UserDirectory({ currentUserId, showToast }: Props) {
               <tr className="border-b-3 border-double text-xs font-bold text-primary">
                 <th className="p-3">Username</th>
                 <th className="p-3">Role</th>
+                {/* ADDED: New Column Header */}
+                <th className="p-3">System AI</th>
                 <th className="p-3 text-right">Actions</th>
               </tr>
             </thead>
@@ -109,17 +113,37 @@ export default function UserDirectory({ currentUserId, showToast }: Props) {
                       <td className="p-3">
                         <div className="h-8 w-32 bg-primary/10 border-3 border-double" />
                       </td>
+                      {/* ADDED: Skeleton cell for the new AI column */}
+                      <td className="p-3">
+                        <div className="h-8 w-28 bg-primary/10 border-3 border-double" />
+                      </td>
                       <td className="p-3 text-right">
                         <div className="h-8 w-16 bg-primary/10 border-3 border-double ml-auto" />
                       </td>
                     </tr>
                   ))
-                : data?.users.map((u) => {
+                : isError ? (
+                    <tr>
+                      <td colSpan={4} className="p-6 text-center text-destructive font-bold border-b-3 border-double bg-destructive/10">
+                        SYSTEM ERROR: Failed to fetch directory data. Check backend terminal for raw logs.
+                      </td>
+                    </tr>
+                ) : !data?.users || data.users.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="p-6 text-center opacity-50 font-bold border-b-3 border-double">
+                        No users found in directory.
+                      </td>
+                    </tr>
+                ) : data.users.map((u) => {
                     const isSelf = u.id === currentUserId;
                     const isSuperAdmin = u.role === "super_admin";
                     const isActionsDisabled = isSelf || isSuperAdmin;
-                    const isCurrentlyUpdating = updatingUserId === u.id;
-                    const isCurrentlyRevoking = revokingUserId === u.id;
+
+                    // MODIFIED: Distinct loading states for the UI
+                    const isCurrentlyUpdatingRole = updatingUserId === u.id;
+                    const isCurrentlyUpdatingAi = updatingAiUserId === u.id;
+                    const isAnyUpdating =
+                      isCurrentlyUpdatingRole || isCurrentlyUpdatingAi;
 
                     return (
                       <tr
@@ -144,9 +168,11 @@ export default function UserDirectory({ currentUserId, showToast }: Props) {
                             </div>
                           </div>
                         </td>
+
+                        {/* ROLE DROPDOWN */}
                         <td className="p-3">
                           <div className="flex items-center gap-3 h-8 w-32">
-                            {isCurrentlyUpdating ? (
+                            {isCurrentlyUpdatingRole ? (
                               <div className="flex items-center gap-2 text-xs font-bold text-primary">
                                 <Loader2 className="h-4 w-4 animate-spin" />
                                 <span>Updating...</span>
@@ -193,31 +219,82 @@ export default function UserDirectory({ currentUserId, showToast }: Props) {
                             )}
                           </div>
                         </td>
+
+                        {/* ADDED: AI ACCESS DROPDOWN */}
+                        <td className="p-3">
+                          <div className="flex items-center gap-3 h-8 w-28">
+                            {isCurrentlyUpdatingAi ? (
+                              <div className="flex items-center gap-2 text-xs font-bold text-primary">
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                <span>Updating...</span>
+                              </div>
+                            ) : (
+                              <Select
+                                disabled={isActionsDisabled}
+                                // Convert boolean to string for Select component
+                                value={
+                                  u.has_system_ai_access ? "true" : "false"
+                                }
+                                onValueChange={(val) =>
+                                  handleAiAccessChange(u.id, val === "true")
+                                }
+                              >
+                                <SelectTrigger
+                                  className={cn(
+                                    "w-28 h-8 border-3 border-double rounded-none bg-background text-xs font-bold focus:ring-0 focus:ring-offset-0",
+                                    u.has_system_ai_access
+                                      ? "text-primary border-primary"
+                                      : "opacity-60",
+                                  )}
+                                >
+                                  <SelectValue placeholder="AI Access" />
+                                </SelectTrigger>
+                                <SelectContent className="border-3 border-double rounded-none bg-background text-xs font-bold">
+                                  <SelectItem
+                                    value="true"
+                                    className="focus:bg-primary focus:text-primary-foreground rounded-none"
+                                  >
+                                    Granted
+                                  </SelectItem>
+                                  <SelectItem
+                                    value="false"
+                                    className="focus:bg-primary focus:text-primary-foreground rounded-none"
+                                  >
+                                    Revoked
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
+                            )}
+                          </div>
+                        </td>
+
                         <td className="p-3 text-right">
                           <div className="flex justify-end gap-2">
                             <Button
                               variant="outline"
-                              disabled={isSelf || isCurrentlyRevoking}
-                              onClick={() => handleRevokeSessions(u.id)}
+                              // MODIFIED: Use the combined loading state
+                              disabled={isActionsDisabled || isAnyUpdating}
+                              onClick={() => {
+                                setRevokeTargetUser({
+                                  id: u.id,
+                                  username: u.username,
+                                });
+                                setShowRevokeModal(true);
+                              }}
                               title="Force Terminate All Sessions"
                               className={cn(
                                 "border-3 border-double border-primary text-primary hover:bg-primary hover:text-primary-foreground rounded-none h-8 w-8 p-0",
-                                isSelf &&
+                                isActionsDisabled &&
                                   "opacity-30 cursor-not-allowed hover:bg-transparent hover:text-primary",
                               )}
                             >
-                              {isCurrentlyRevoking ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <PowerOff className="h-4 w-4" />
-                              )}
+                              <PowerOff className="h-4 w-4" />
                             </Button>
 
                             <Button
                               variant="outline"
-                              disabled={
-                                isActionsDisabled || isCurrentlyUpdating
-                              }
+                              // MODIFIED: Use the combined loading state
+                              disabled={isActionsDisabled || isAnyUpdating}
                               onClick={() => {
                                 setTargetUser({
                                   id: u.id,
@@ -243,12 +320,24 @@ export default function UserDirectory({ currentUserId, showToast }: Props) {
         </div>
       </div>
 
+      {/* --- MODALS --- */}
       {showDeleteModal && targetUser && (
         <DeleteUserModal
           targetUser={targetUser}
           onClose={() => {
             setShowDeleteModal(false);
             setTargetUser(null);
+          }}
+          showToast={showToast}
+        />
+      )}
+
+      {showRevokeModal && revokeTargetUser && (
+        <RevokeSessionsModal
+          targetUser={revokeTargetUser}
+          onClose={() => {
+            setShowRevokeModal(false);
+            setRevokeTargetUser(null);
           }}
           showToast={showToast}
         />

@@ -48,7 +48,7 @@ const SmartImage = ({
     >
       {isLoading && (
         <div className="absolute inset-0 z-10 animate-pulse flex items-center justify-center border-3 border-double bg-background">
-          {!isAvatar && <span className="text-xs font-bold">Loading...</span>}
+          {!isAvatar && <span className="text-sm font-bold">Loading...</span>}
         </div>
       )}
 
@@ -105,13 +105,13 @@ export default function PostCard({ post }: { post: Post }) {
 
         {/* Category + Subcategory (if exists) */}
         <div className="flex items-center gap-1 flex-wrap">
-          <span className="bg-primary text-primary-foreground border-3 border-double font-bold p-1 w-fit text-xs">
+          <span className="bg-primary text-primary-foreground border-3 border-double font-bold p-1 w-fit text-sm">
             {post.category}
           </span>
           {post.subcategory && (
             <span
               className={cn(
-                "font-bold p-1 w-fit text-xs border-3 border-double",
+                "font-bold p-1 w-fit text-sm border-3 border-double",
                 post.subcategory === "serious"
                   ? "bg-primary text-primary-foreground"
                   : "border-primary text-primary",
@@ -125,10 +125,10 @@ export default function PostCard({ post }: { post: Post }) {
         {/* Content with Clamping */}
         <div className="flex flex-col gap-1">
           <h4 className="text-primary font-bold line-clamp-1">{post.title}</h4>
-          <p className="text-xs font-bold line-clamp-2">
+          <p className="text-sm font-bold line-clamp-2">
             {post.short_description}
           </p>
-          <p className="text-xs line-clamp-3">{post.main_content}</p>
+          <p className="text-sm line-clamp-3">{post.main_content}</p>
         </div>
       </div>
 
@@ -141,7 +141,7 @@ export default function PostCard({ post }: { post: Post }) {
           <div className="flex flex-col justify-center flex-1 min-w-0">
             <p className="text-primary flex items-baseline gap-2 line-clamp-1">
               <span className="font-bold truncate">{AUTHOR_NAME}</span>
-              <span className="text-xs opacity-80 truncate">
+              <span className="text-sm opacity-80 truncate">
                 {AUTHOR_TITLE}
               </span>
             </p>
@@ -163,13 +163,13 @@ export default function PostCard({ post }: { post: Post }) {
           {visibleTags.map((tag: string) => (
             <span
               key={tag}
-              className="border-3 border-double bg-background p-1 text-xs"
+              className="border-3 border-double bg-background p-1 text-sm"
             >
               #{tag}
             </span>
           ))}
           {remainingTags > 0 && (
-            <span className="border-3 border-double p-1 text-xs font-bold bg-primary text-primary-foreground">
+            <span className="border-3 border-double p-1 text-sm font-bold bg-primary text-primary-foreground">
               +{remainingTags}
             </span>
           )}

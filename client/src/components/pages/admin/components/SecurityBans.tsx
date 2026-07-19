@@ -16,10 +16,13 @@ interface Props {
 }
 
 export default function SecurityBans({ showToast }: Props) {
-  // Poll Redis every 15 seconds to keep the list synced if bans happen while you are on the page
-  const { data, isLoading, isFetching, refetch } = useGetBansQuery(undefined, {
-    pollingInterval: 15000,
-  });
+  // MODIFIED: Destructured isError
+  const { data, isLoading, isFetching, refetch, isError } = useGetBansQuery(
+    undefined,
+    {
+      pollingInterval: 15000,
+    },
+  );
 
   const [liftBan] = useLiftBanMutation();
   const [liftingKey, setLiftingKey] = useState<string | null>(null);
@@ -99,6 +102,16 @@ export default function SecurityBans({ showToast }: Props) {
                   className="p-6 text-center text-destructive animate-pulse font-sans font-bold"
                 >
                   Scanning Redis clusters...
+                </td>
+              </tr>
+            ) : isError ? (
+              <tr>
+                <td
+                  colSpan={4}
+                  className="p-6 text-center text-destructive font-bold border-b-3 border-double bg-destructive/20 font-sans"
+                >
+                  SYSTEM ERROR: Failed to fetch security bans. Check backend
+                  terminal for raw logs.
                 </td>
               </tr>
             ) : !data?.bans || data.bans.length === 0 ? (

@@ -23,6 +23,8 @@ interface FilterSectionProps {
   sortOrder?: "ASC" | "DESC";
   setSortOrder?: (value: "ASC" | "DESC") => void;
   clearAllFilters?: () => void;
+  isTagsLoading?: boolean; // <-- NEW
+  isTagsError?: boolean; // <-- NEW
 }
 
 export default function FilterSection({
@@ -43,6 +45,8 @@ export default function FilterSection({
   sortOrder = "DESC",
   setSortOrder,
   clearAllFilters,
+  isTagsLoading, // <-- NEW
+  isTagsError, // <-- NEW
 }: FilterSectionProps) {
   const [localSearch, setLocalSearch] = useState(searchQuery);
 
@@ -208,23 +212,42 @@ export default function FilterSection({
             Filter by tags :
           </label>
           <div className="flex flex-wrap gap-2 max-h-[100px] overflow-y-auto p-1 border-3 border-double scrollbar-thin scrollbar-thumb-primary">
-            {allAvailableTags.map((tag) => {
-              const isSelected = selectedTags.includes(tag);
-              return (
-                <button
-                  key={tag}
-                  onClick={() => toggleTag(tag)}
-                  className={cn(
-                    "border-3 border-double p-1 text-xs font-bold transition-all",
-                    isSelected
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-background hover:border-primary",
-                  )}
-                >
-                  #{tag}
-                </button>
-              );
-            })}
+            {/* --- NEW LOADER & ERROR LOGIC START --- */}
+            {isTagsError ? (
+              <p className="text-xs font-bold text-destructive">
+                Error loading tags.
+              </p>
+            ) : isTagsLoading ? (
+              Array.from({ length: 5 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="border-3 border-double bg-primary/10 animate-pulse h-[26px] w-16"
+                />
+              ))
+            ) : allAvailableTags.length > 0 ? (
+              allAvailableTags.map((tag) => {
+                const isSelected = selectedTags.includes(tag);
+                return (
+                  <button
+                    key={tag}
+                    onClick={() => toggleTag(tag)}
+                    className={cn(
+                      "border-3 border-double p-1 text-xs font-bold transition-all",
+                      isSelected
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-background hover:border-primary",
+                    )}
+                  >
+                    #{tag}
+                  </button>
+                );
+              })
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                No tags available.
+              </p>
+            )}
+            {/* --- NEW LOADER & ERROR LOGIC END --- */}
           </div>
         </div>
       </div>

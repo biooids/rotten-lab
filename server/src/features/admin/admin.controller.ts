@@ -5,11 +5,12 @@ import jwt from "jsonwebtoken";
 import { adminService } from "./admin.service.js";
 import type { JWTPayload } from "../auth/auth.types.js";
 import type {
-  UpdateSystemSettingsDTO, // MODIFIED: Imported updated DTO name
+  UpdateSystemSettingsDTO,
   UpdateRoleDTO,
   SystemSettingsDTO,
   AdminUserDTO,
   RevokeSessionsDTO,
+  UpdateAiAccessDTO,
 } from "./admin.types.js";
 
 const ACCESS_TOKEN_SECRET = process.env["ACCESS_TOKEN_SECRET"];
@@ -181,6 +182,128 @@ export const adminController = {
     }
   },
 
+  async changeUserAiAccess(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      res.statusCode = 401;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ error: "Unauthorized" }));
+      return;
+    }
+
+    let decoded: JWTPayload;
+    try {
+      decoded = jwt.verify(
+        authHeader.split(" ")[1] as string,
+        ACCESS_TOKEN_SECRET as string,
+      ) as JWTPayload;
+    } catch (err: any) {
+      process.stderr.write(
+        `[changeUserAiAccess] JWT Verify Error: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+      );
+      res.statusCode = 401;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ error: "Unauthorized" }));
+      return;
+    }
+
+    if (decoded.role !== "super_admin") {
+      res.statusCode = 403;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ error: "Forbidden: Super Admin only." }));
+      return;
+    }
+
+    let body: UpdateAiAccessDTO;
+    try {
+      body = (await json(req)) as UpdateAiAccessDTO;
+    } catch (err: any) {
+      process.stderr.write(
+        `[changeUserAiAccess] JSON Parse Error: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+      );
+      res.statusCode = 400;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ error: "Invalid JSON format." }));
+      return;
+    }
+
+    try {
+      if (!body.targetUserId || typeof body.hasAccess !== "boolean") {
+        res.statusCode = 400;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ error: "Invalid input" }));
+        return;
+      }
+
+      if (decoded.id === body.targetUserId) {
+        res.statusCode = 400;
+        res.setHeader("Content-Type", "application/json");
+        res.end(
+          JSON.stringify({
+            error: "Administrative self-mutation protocol is blocked.",
+          }),
+        );
+        return;
+      }
+
+      const targetQuery = await adminService.getUserById(body.targetUserId);
+      if (targetQuery.rowCount === 0) {
+        res.statusCode = 404;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ error: "Target account not located." }));
+        return;
+      }
+
+      const targetUser = targetQuery.rows[0];
+
+      if (targetUser.role === "super_admin") {
+        res.statusCode = 403;
+        res.setHeader("Content-Type", "application/json");
+        res.end(
+          JSON.stringify({
+            error:
+              "Clearance Level: Super Admin credentials are immutable once established.",
+          }),
+        );
+        return;
+      }
+
+      const result = await adminService.updateUserAiAccess(
+        body.targetUserId,
+        body.hasAccess,
+        decoded.id,
+      );
+
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "application/json");
+      res.end(
+        JSON.stringify({
+          message: "System AI Access updated successfully.",
+          user: result.rows[0] as AdminUserDTO,
+        }),
+      );
+    } catch (err: any) {
+      process.stderr.write(
+        `[changeUserAiAccess] DB/Logic Error: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+      );
+      res.statusCode = 500;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ error: "Failed to update AI access" }));
+    }
+  },
+
   async removeUser(
     req: IncomingMessage,
     res: ServerResponse,
@@ -258,7 +381,8 @@ export const adminController = {
         return;
       }
 
-      const result = await adminService.deleteUser(targetId);
+      // MODIFIED: Passed decoded.id so the service can log who performed the deletion
+      const result = await adminService.deleteUser(targetId, decoded.id);
       if (result.rowCount === 0) {
         res.statusCode = 404;
         res.setHeader("Content-Type", "application/json");
@@ -332,7 +456,7 @@ export const adminController = {
       return;
     }
 
-    let body: UpdateSystemSettingsDTO; // MODIFIED: Uses new explicit DTO
+    let body: UpdateSystemSettingsDTO;
     try {
       body = (await json(req)) as UpdateSystemSettingsDTO;
     } catch (err) {
@@ -353,7 +477,6 @@ export const adminController = {
         return;
       }
 
-      // ADDED: Explicit type checking for the two new global AI toggles
       if (typeof body.allow_global_gemini !== "boolean") {
         res.statusCode = 400;
         res.setHeader("Content-Type", "application/json");
@@ -385,7 +508,6 @@ export const adminController = {
         return;
       }
 
-      // MODIFIED: Injecting the boolean toggles down into the service layer
       const result = await adminService.updateSystemSettings(
         body.is_maintenance,
         body.maintenance_message,
@@ -531,6 +653,43 @@ export const adminController = {
         res.statusCode = 400;
         res.setHeader("Content-Type", "application/json");
         res.end(JSON.stringify({ error: "Target User ID is required." }));
+        return;
+      }
+
+      // MODIFIED: Added check to prevent an admin from terminating their own sessions
+      if (decoded.id === body.targetUserId) {
+        res.statusCode = 400;
+        res.setHeader("Content-Type", "application/json");
+        res.end(
+          JSON.stringify({
+            error:
+              "Self-termination protocol is blocked. Cannot revoke own sessions.",
+          }),
+        );
+        return;
+      }
+
+      // MODIFIED: Fetch the target user explicitly to verify their existence and role
+      const targetQuery = await adminService.getUserById(body.targetUserId);
+      if (targetQuery.rowCount === 0) {
+        res.statusCode = 404;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ error: "Target account not located." }));
+        return;
+      }
+
+      const targetUser = targetQuery.rows[0];
+
+      // MODIFIED: Added check to prevent terminating sessions for another super_admin
+      if (targetUser.role === "super_admin") {
+        res.statusCode = 403;
+        res.setHeader("Content-Type", "application/json");
+        res.end(
+          JSON.stringify({
+            error:
+              "Clearance Level: Super Admin sessions are immutable to external termination.",
+          }),
+        );
         return;
       }
 

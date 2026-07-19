@@ -141,7 +141,12 @@ export default function CategoryFeed({
   });
 
   // Fetch only tags that exist within this specific category
-  const { data: contextualTagsData } = useGetAllTagsQuery(category);
+  // FIX: Explicitly passing object to match updated API Slice
+  const {
+    data: contextualTagsData,
+    isLoading: isTagsLoading, // <-- NEW
+    isError: isTagsError,
+  } = useGetAllTagsQuery({ category });
 
   const isPageLoading = isLoading || isFetching;
   const filteredPosts = activeData?.posts || [];
@@ -176,6 +181,8 @@ export default function CategoryFeed({
         sortOrder={sortOrder}
         setSortOrder={setSortOrder}
         clearAllFilters={() => router.push(pathname, { scroll: false })}
+        isTagsLoading={isTagsLoading} // <-- NEW
+        isTagsError={isTagsError}
       />
 
       {isError ? (

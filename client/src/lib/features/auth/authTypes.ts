@@ -11,6 +11,7 @@ export interface User {
 
   hasGeminiKey?: boolean;
   hasClaudeKey?: boolean;
+  prefer_system_ai_key?: boolean; // ADDED
   created_at?: string;
   updated_at?: string;
 }

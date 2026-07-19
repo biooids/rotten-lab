@@ -96,15 +96,16 @@ export const geminiController = {
       return;
     }
 
-    // --- ADDED: BYOK & ROLE AUTHORIZATION CHECK ---
+    // --- ADDED: BYOK & GRANULAR ROLE AUTHORIZATION CHECK ---
     // If the user is an admin, let them through (they use the global .env key or their BYOK).
-    // If they are a standard user, check both their personal key and the global system permission.
+    // If they are a standard user, check their personal key, the global system permission, AND their specific account permission.
     if (decoded.role === "user") {
       try {
-        // MODIFIED: Now fetching BOTH the personal key and the global system setting simultaneously
+        // MODIFIED: Fetching personal key, individual AI access, and global system setting simultaneously
         const keyCheckSql = `
           SELECT 
             u.gemini_api_key,
+            u.has_system_ai_access,
             (SELECT allow_global_gemini FROM system_settings WHERE id = 1) AS allow_global_gemini
           FROM users u 
           WHERE u.id = $1
@@ -124,17 +125,18 @@ export const geminiController = {
         const hasPersonalKey =
           userData.gemini_api_key && userData.gemini_api_key.trim() !== "";
         const hasGlobalAccess = userData.allow_global_gemini === true;
+        const hasIndividualAiAccess = userData.has_system_ai_access === true;
 
-        // MODIFIED: Reject only if they lack a personal key AND global access is turned off
-        if (!hasPersonalKey && !hasGlobalAccess) {
+        // MODIFIED: Reject if they lack a personal key AND (global access is off AND individual access is off)
+        if (!hasPersonalKey && !hasGlobalAccess && !hasIndividualAiAccess) {
           process.stderr.write(
-            `[HTTP_SHIELD] Rejected standard user ${decoded.id}: No BYOK Gemini key configured and global access is disabled.\n`,
+            `[HTTP_SHIELD] Rejected standard user ${decoded.id}: No BYOK Gemini key configured and global/individual access is denied.\n`,
           );
           res.statusCode = 403;
           res.end(
             JSON.stringify({
               error:
-                "Access Denied: Global access is disabled. You must configure a valid Gemini API key in your Account Settings to perform scans.",
+                "Access Denied: You do not have permission to use the system AI engine. You must configure a valid Gemini API key in your Account Settings.",
             }),
           );
           return;
@@ -306,14 +308,15 @@ export const geminiController = {
       return;
     }
 
-    // --- ADDED: BYOK & ROLE AUTHORIZATION CHECK ---
-    // Same check as URL scanner to ensure standard users are paying their own compute cost unless globally granted
+    // --- ADDED: BYOK & GRANULAR ROLE AUTHORIZATION CHECK ---
+    // Same check as URL scanner to ensure standard users are paying their own compute cost unless globally/individually granted
     if (decoded.role === "user") {
       try {
-        // MODIFIED: Now fetching BOTH the personal key and the global system setting simultaneously
+        // MODIFIED: Fetching personal key, individual AI access, and global system setting simultaneously
         const keyCheckSql = `
           SELECT 
             u.gemini_api_key,
+            u.has_system_ai_access,
             (SELECT allow_global_gemini FROM system_settings WHERE id = 1) AS allow_global_gemini
           FROM users u 
           WHERE u.id = $1
@@ -333,17 +336,18 @@ export const geminiController = {
         const hasPersonalKey =
           userData.gemini_api_key && userData.gemini_api_key.trim() !== "";
         const hasGlobalAccess = userData.allow_global_gemini === true;
+        const hasIndividualAiAccess = userData.has_system_ai_access === true;
 
-        // MODIFIED: Reject only if they lack a personal key AND global access is turned off
-        if (!hasPersonalKey && !hasGlobalAccess) {
+        // MODIFIED: Reject if they lack a personal key AND (global access is off AND individual access is off)
+        if (!hasPersonalKey && !hasGlobalAccess && !hasIndividualAiAccess) {
           process.stderr.write(
-            `[HTTP_SHIELD] Rejected standard user ${decoded.id}: No BYOK Gemini key configured and global access is disabled.\n`,
+            `[HTTP_SHIELD] Rejected standard user ${decoded.id}: No BYOK Gemini key configured and global/individual access is denied.\n`,
           );
           res.statusCode = 403;
           res.end(
             JSON.stringify({
               error:
-                "Access Denied: Global access is disabled. You must configure a valid Gemini API key in your Account Settings to perform scans.",
+                "Access Denied: You do not have permission to use the system AI engine. You must configure a valid Gemini API key in your Account Settings.",
             }),
           );
           return;

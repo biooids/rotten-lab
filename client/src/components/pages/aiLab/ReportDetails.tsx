@@ -248,16 +248,16 @@ export default function ReportDetails({
           <div className="flex items-center gap-3 flex-wrap">
             <span
               className={cn(
-                "text-[10px] font-bold border-3 border-double px-2 py-1 ",
+                "text-sm font-bold border-3 border-double px-2 py-1 ",
                 engine === "claude"
                   ? "text-orange-500 border-orange-500 bg-orange-500/10"
                   : "text-blue-500 border-blue-500 bg-blue-500/10",
               )}
             >
-              Engine: {engine.toUpperCase()}
+              Engine: {engine}
             </span>
             {activeReport?.ai_model && (
-              <span className="text-[10px] font-bold border-3 border-double px-2 py-1  opacity-80">
+              <span className="text-sm font-bold border-3 border-double px-2 py-1  opacity-80">
                 Model: {activeReport.ai_model}
               </span>
             )}
@@ -342,7 +342,7 @@ export default function ReportDetails({
                       Our server is automatically retrying. Please keep this
                       page open.
                     </span>
-                    <span className="opacity-60 mt-2 font-mono text-[10px]">
+                    <span className="opacity-60 mt-2 font-mono text-sm">
                       Time elapsed on current chunk: {secondsSinceUpdate}s
                     </span>
                   </div>
@@ -385,12 +385,12 @@ export default function ReportDetails({
                 </div>
 
                 {downloadStatus === "success" && (
-                  <div className="text-[10px] font-bold border-3 border-double border-primary text-primary bg-primary/10 px-2 py-1">
+                  <div className="text-sm font-bold border-3 border-double border-primary text-primary bg-primary/10 px-2 py-1">
                     PDF downloaded successfully.
                   </div>
                 )}
                 {downloadStatus === "error" && (
-                  <div className="text-[10px] font-bold border-3 border-double border-destructive text-destructive bg-destructive/10 px-2 py-1 flex flex-col text-right">
+                  <div className="text-sm font-bold border-3 border-double border-destructive text-destructive bg-destructive/10 px-2 py-1 flex flex-col text-right">
                     <span>Failed to download PDF.</span>
                     <span className="opacity-80">{downloadErrorMsg}</span>
                   </div>

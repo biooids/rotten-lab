@@ -5,6 +5,7 @@ export interface AdminUserDTO {
   id: string;
   username: string;
   role: UserRole;
+  has_system_ai_access: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -50,4 +51,8 @@ export interface SecurityBanDTO {
   type: "IP" | "USERNAME";
   target: string;
   remainingSeconds: number;
+}
+export interface UpdateAiAccessDTO {
+  targetUserId: string;
+  hasAccess: boolean;
 }

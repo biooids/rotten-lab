@@ -146,8 +146,11 @@ export default function Projects() {
     sortOrder,
   });
 
-  // Fetch only tags that exist within the projects category
-  const { data: contextualTagsData } = useGetAllTagsQuery("projects");
+  // Fetch only tags that exist within the projects category and current active tab
+  const { data: contextualTagsData } = useGetAllTagsQuery({
+    category: "projects",
+    subcategory: activeTab,
+  });
 
   const isPageLoading = isLoading || isFetching;
   const filteredPosts = activeData?.posts || [];

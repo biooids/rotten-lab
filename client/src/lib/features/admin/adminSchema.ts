@@ -19,3 +19,9 @@ export const updateMaintenanceSchema = z.object({
   allow_global_gemini: z.boolean(),
   allow_global_claude: z.boolean(),
 });
+
+export const updateAiAccessSchema = z.object({
+  targetUserId: z.string().uuid("Invalid User ID format."),
+  hasAccess: z.boolean(),
+  preferSystemKey: z.boolean(), // ADDED
+});

@@ -39,6 +39,8 @@ CREATE TABLE users (
     avatar_url VARCHAR(2048) DEFAULT 'https://res.cloudinary.com/dhr9zmb3i/image/upload/v1782116959/portfolio/p8f5k0lhoukdzptxy6fj.jpg', -- ADDED THIS LINE
     password_hash VARCHAR(255) NOT NULL CHECK (char_length(password_hash) >= 60),
     role user_role NOT NULL DEFAULT 'user', 
+    has_system_ai_access BOOLEAN NOT NULL DEFAULT false,
+    prefer_system_ai_key BOOLEAN NOT NULL DEFAULT false,
     gemini_api_key TEXT, -- Encrypted at rest using pgcrypto
     claude_api_key TEXT, -- Encrypted at rest using pgcrypto
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,

@@ -190,15 +190,17 @@ export const geminiService = {
     const aiStartTime = Date.now();
 
     // ADDED: Bring Your Own Key (BYOK) Resolution Logic
-    // We check the DB to see if the user has a custom key, or if they are an admin allowed to use the global key.
+    // We check the DB to see if the user has a custom key, or if they are permitted to use the global key.
     let activeGeminiClient: GoogleGenAI;
     try {
       const encryptionKey = process.env["DB_ENCRYPTION_KEY"] as string;
 
-      // MODIFIED: Updated SQL to manually select allow_global_gemini from system_settings directly in this query
+      // MODIFIED: Updated SQL to fetch individual ai access, global ai access, AND prefer_system_ai_key simultaneously
       const userKeySql = `
         SELECT 
           u.role,
+          u.has_system_ai_access,
+          u.prefer_system_ai_key,
           CASE 
             WHEN u.gemini_api_key IS NOT NULL AND u.gemini_api_key <> '' 
             THEN pgp_sym_decrypt(dearmor(u.gemini_api_key), $2) 
@@ -218,13 +220,36 @@ export const geminiService = {
 
       const userRow = keyRes.rows[0];
 
-      if (userRow.decrypted_key) {
+      // ADDED: Verbose boolean flags for clear, readable routing logic
+      const isAdmin =
+        userRow.role === "admin" || userRow.role === "super_admin";
+      const hasSystemAccess =
+        userRow.has_system_ai_access === true ||
+        userRow.allow_global_gemini === true;
+      const isSystemAllowed = isAdmin || hasSystemAccess;
+
+      // MODIFIED: Flipped the priority logic. System key preference + Authorization takes top priority.
+      if (userRow.prefer_system_ai_key === true && isSystemAllowed) {
+        if (!globalGeminiClient) {
+          throw new Error(
+            "User prefers system key and is authorized, but server is missing default GEMINI_API_KEY in environment variables.",
+          );
+        }
+        activeGeminiClient = globalGeminiClient;
+        process.stdout.write(
+          `[GEMINI_AUTH] User ${adminId} prefers system key and is authorized. Routing to global environment AI client.\n`,
+        );
+      }
+      // MODIFIED: Fallback 1 - If they don't prefer the system key (or aren't allowed), check if they have a personal key
+      else if (userRow.decrypted_key) {
         // STANDARD USER (OR ADMIN OVERRIDE): Instantiate a dynamic client using their personal key
         activeGeminiClient = new GoogleGenAI({ apiKey: userRow.decrypted_key });
         process.stdout.write(
           `[GEMINI_AUTH] Spawning dynamic AI client using custom BYOK for user ${adminId}.\n`,
         );
-      } else if (userRow.role === "admin" || userRow.role === "super_admin") {
+      }
+      // MODIFIED: Fallback 2 - No personal key, check if they are an admin as a last resort
+      else if (isAdmin) {
         // ADMIN: Use the global .env client for easy access
         if (!globalGeminiClient) {
           throw new Error(
@@ -233,10 +258,12 @@ export const geminiService = {
         }
         activeGeminiClient = globalGeminiClient;
         process.stdout.write(
-          `[GEMINI_AUTH] Routing to global environment AI client for admin ${adminId}.\n`,
+          `[GEMINI_AUTH] Routing to global environment AI client for admin ${adminId} as fallback.\n`,
         );
-      } else if (userRow.allow_global_gemini === true) {
-        // ADDED: STANDARD USER FALLBACK TO GLOBAL KEY IF PERMITTED BY SYSTEM SETTINGS
+      }
+      // MODIFIED: Fallback 3 - No personal key, check if standard user has global/system access as a last resort
+      else if (hasSystemAccess) {
+        // STANDARD USER FALLBACK TO GLOBAL KEY ONLY IF INDIVIDUAL ACCESS AND SYSTEM ACCESS ARE GRANTED
         if (!globalGeminiClient) {
           throw new Error(
             "System setting allows global Gemini, but GEMINI_API_KEY is missing from environment variables.",
@@ -244,11 +271,13 @@ export const geminiService = {
         }
         activeGeminiClient = globalGeminiClient;
         process.stdout.write(
-          `[GEMINI_AUTH] Routing to global environment AI client for standard user ${adminId} via system_settings permission.\n`,
+          `[GEMINI_AUTH] Routing to global environment AI client for standard user ${adminId} via granted individual and system permissions as fallback.\n`,
         );
-      } else {
+      }
+      // MODIFIED: Final Fallback - Deny access
+      else {
         throw new Error(
-          "Access Denied: Standard users must provide their own Gemini API key in Account Settings, and global access is currently disabled.",
+          "Access Denied: Standard users must provide their own Gemini API key in Account Settings, or global access is disabled.",
         );
       }
     } catch (keyErr: any) {
@@ -338,7 +367,6 @@ export const geminiService = {
 
       while (attempt <= MAX_RETRIES) {
         try {
-          // MODIFIED: Changed from 'ai.models.generateContent' to 'activeGeminiClient.models.generateContent'
           const response = await activeGeminiClient.models.generateContent({
             model,
             contents: runtimePrompt,
@@ -499,7 +527,6 @@ export const geminiService = {
       [reportId],
     );
   },
-
   async getReportsHistory(
     adminId: string,
     page: number = 1,
@@ -640,9 +667,11 @@ export const geminiService = {
       // 1. Test Database & Decryption
       const encryptionKey = process.env["DB_ENCRYPTION_KEY"] as string;
 
-      // MODIFIED: Added system_settings select to check allow_global_gemini manually
+      // MODIFIED: Added prefer_system_ai_key to the fetch query alongside individual AI access and global system setting
       const userKeySql = `
         SELECT u.role,
+        u.has_system_ai_access,
+        u.prefer_system_ai_key,
         CASE 
           WHEN u.gemini_api_key IS NOT NULL AND u.gemini_api_key <> '' 
           THEN pgp_sym_decrypt(dearmor(u.gemini_api_key), $2) 
@@ -659,14 +688,38 @@ export const geminiService = {
 
       const userRow = keyRes.rows[0];
 
+      // ADDED: Verbose boolean flags for checking authorization
+      const isAdmin =
+        userRow.role === "admin" || userRow.role === "super_admin";
+      const hasSystemAccess =
+        userRow.has_system_ai_access === true ||
+        userRow.allow_global_gemini === true;
+      const isSystemAllowed = isAdmin || hasSystemAccess;
+
       // 2. Resolve the Key
-      if (userRow.decrypted_key) {
+      // MODIFIED: Flipped the priority logic. System key preference + Authorization takes top priority.
+      if (userRow.prefer_system_ai_key === true && isSystemAllowed) {
+        if (!globalGeminiClient) {
+          throw new Error(
+            "SYSTEM_KEY_MISSING: User prefers system key and is authorized, but server lacks .env key.",
+          );
+        }
+        activeGeminiClient = globalGeminiClient;
+        source = "SYSTEM_DEFAULT_PREFERRED";
+        process.stdout.write(
+          `[GEMINI_TEST] User prefers system key and is authorized. Routing to global environment AI client.\n`,
+        );
+      }
+      // MODIFIED: Fallback 1 - Personal Key
+      else if (userRow.decrypted_key) {
         activeGeminiClient = new GoogleGenAI({ apiKey: userRow.decrypted_key });
         source = "PERSONAL_BYOK";
         process.stdout.write(
           `[GEMINI_TEST] Successfully decrypted BYOK for user.\n`,
         );
-      } else if (userRow.role === "admin" || userRow.role === "super_admin") {
+      }
+      // MODIFIED: Fallback 2 - Admin default
+      else if (isAdmin) {
         if (!globalGeminiClient) {
           throw new Error(
             "SYSTEM_KEY_MISSING: Admin lacks BYOK and server lacks .env key.",
@@ -675,10 +728,12 @@ export const geminiService = {
         activeGeminiClient = globalGeminiClient;
         source = "SYSTEM_DEFAULT";
         process.stdout.write(
-          `[GEMINI_TEST] Using system default .env key for Admin.\n`,
+          `[GEMINI_TEST] Using system default .env key for Admin as fallback.\n`,
         );
-      } else if (userRow.allow_global_gemini === true) {
-        // ADDED: Global fallback for standard users based on admin permission
+      }
+      // MODIFIED: Fallback 3 - System Granted default
+      else if (hasSystemAccess) {
+        // Global fallback for standard users based on individual AND system permission
         if (!globalGeminiClient) {
           throw new Error(
             "SYSTEM_KEY_MISSING: System allows global Gemini, but server lacks .env key.",
@@ -687,11 +742,13 @@ export const geminiService = {
         activeGeminiClient = globalGeminiClient;
         source = "SYSTEM_DEFAULT_GRANTED";
         process.stdout.write(
-          `[GEMINI_TEST] Using system default .env key for standard user via granted permission.\n`,
+          `[GEMINI_TEST] Using system default .env key for standard user via granted permission as fallback.\n`,
         );
-      } else {
+      }
+      // MODIFIED: Final Fallback - Deny access
+      else {
         throw new Error(
-          "MISSING_BYOK: Standard user has no configured API key, and global access is disabled.",
+          "MISSING_BYOK: Standard user has no configured API key, or individual/global access is disabled.",
         );
       }
 
@@ -731,6 +788,9 @@ export const geminiService = {
     } catch (err: any) {
       process.stderr.write(
         `[GEMINI_TEST_FATAL] Telemetry failed: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
       );
       throw err;
     }

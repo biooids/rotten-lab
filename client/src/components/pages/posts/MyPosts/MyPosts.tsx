@@ -124,11 +124,21 @@ function MyPostsContent() {
     sortOrder,
   });
 
-  const { data: globalTagsData } = useGetAllTagsQuery(); // For MyPosts, global tags are fine to show all options
+  // --- FETCH CONTEXTUAL TAGS ---
+  // We pass { mine: true } to the endpoint so it only fetches tags for posts owned by the logged-in user
+  // We also pass the activeCategory so tags filter down further if a room is selected.
+  const {
+    data: contextualTagsData,
+    isLoading: isTagsLoading, // <-- NEW
+    isError: isTagsError,
+  } = useGetAllTagsQuery({
+    category: activeCategory !== "all" ? activeCategory : null,
+    mine: true,
+  });
 
   const isPageLoading = isLoading || isFetching;
   const filteredPosts = activeData?.posts || [];
-  const allAvailableTags = globalTagsData?.tags || [];
+  const allAvailableTags = contextualTagsData?.tags || [];
 
   return (
     <section className="p-3 lg:p-6 min-h-screen flex flex-col gap-6 bg-background text-foreground">
@@ -166,6 +176,8 @@ function MyPostsContent() {
         sortOrder={sortOrder}
         setSortOrder={setSortOrder}
         clearAllFilters={() => router.push(pathname, { scroll: false })}
+        isTagsLoading={isTagsLoading} // <-- NEW
+        isTagsError={isTagsError}
       />
 
       {isError ? (

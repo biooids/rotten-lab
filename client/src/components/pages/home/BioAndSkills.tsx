@@ -48,6 +48,10 @@ const devOpsData = [
   { label: "infrastructure :", value: "terraform, ansible" },
   { label: "cloud & network :", value: "aws, gcp, cloudflare" },
   { label: "vcs / platforms :", value: "git, github and gitlab" },
+  {
+    label: " monitoring :",
+    value: " Prometheus (and PromQL), Grafana",
+  },
 ];
 
 const frontendData = [

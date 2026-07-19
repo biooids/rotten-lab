@@ -991,13 +991,58 @@ export const postsController = {
   },
 
   async getTags(
-    _req: IncomingMessage,
+    req: IncomingMessage,
     res: ServerResponse,
     url: URL,
   ): Promise<void> {
     try {
       const category = url.searchParams.get("category") || null;
-      const tagsList = await postsService.getAllUniqueTags(category);
+      const subcategory = url.searchParams.get("subcategory") || null;
+      const isMine = url.searchParams.get("mine") === "true";
+      let authorId: string | null = null;
+
+      // Verbose logic to handle user-specific tags explicitly
+      if (isMine) {
+        const authHeader = req.headers.authorization;
+
+        if (!authHeader || !authHeader.startsWith("Bearer ")) {
+          process.stderr.write(
+            `[getTags] Auth Error: Missing or invalid authorization header.\n`,
+          );
+          res.statusCode = 401;
+          res.setHeader("Content-Type", "application/json");
+          res.end(
+            JSON.stringify({ error: "Unauthorized to view personal tags." }),
+          );
+          return;
+        }
+
+        // Dedicated try/catch specifically for JWT verification errors so we don't hide the stack
+        try {
+          const token = authHeader.split(" ")[1] as string;
+          const decoded = jwt.verify(
+            token,
+            ACCESS_TOKEN_SECRET as string,
+          ) as JWTPayload;
+
+          authorId = decoded.id;
+        } catch (err: any) {
+          process.stderr.write(
+            `[getTags] JWT Verify Error: ${err.message}\nStack: ${err.stack}\n`,
+          );
+          res.statusCode = 401;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ error: `Invalid token: ${err.message}` }));
+          return;
+        }
+      }
+
+      // Explicitly pass both category and subcategory down to the service
+      const tagsList = await postsService.getAllUniqueTags(
+        category,
+        subcategory,
+        authorId,
+      );
 
       res.statusCode = 200;
       res.setHeader("Content-Type", "application/json");

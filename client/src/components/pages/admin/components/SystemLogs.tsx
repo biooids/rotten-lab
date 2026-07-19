@@ -1,4 +1,4 @@
-//src/components/pages/admin/components/SystemLogs.tsx
+// src/components/pages/admin/components/SystemLogs.tsx
 "use client";
 
 import React, { useState, useEffect } from "react";
@@ -18,8 +18,8 @@ export default function SystemLogs() {
   const [activeSearch, setActiveSearch] = useState<string | void>(undefined);
   const [page, setPage] = useState(1);
 
-  // Send BOTH activeSearch and page to the backend
-  const { data, isLoading, isFetching } = useGetAuditLogsQuery({
+  // MODIFIED: Destructured isError
+  const { data, isLoading, isFetching, isError } = useGetAuditLogsQuery({
     query: activeSearch || undefined,
     page: page,
   });
@@ -97,7 +97,17 @@ export default function SystemLogs() {
                   Loading system logs...
                 </td>
               </tr>
-            ) : data?.logs.length === 0 ? (
+            ) : isError ? (
+              <tr>
+                <td
+                  colSpan={4}
+                  className="p-6 text-center text-destructive font-bold border-b-3 border-double bg-destructive/10 font-sans"
+                >
+                  SYSTEM ERROR: Failed to fetch audit logs. Check backend
+                  terminal for raw logs.
+                </td>
+              </tr>
+            ) : !data?.logs || data.logs.length === 0 ? (
               <tr>
                 <td
                   colSpan={4}
@@ -107,7 +117,7 @@ export default function SystemLogs() {
                 </td>
               </tr>
             ) : (
-              data?.logs.map((log) => (
+              data.logs.map((log) => (
                 <tr
                   key={log.id}
                   className="border-b-3 border-double hover:bg-card/50 transition-colors"

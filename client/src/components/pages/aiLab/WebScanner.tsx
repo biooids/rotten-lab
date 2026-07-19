@@ -192,34 +192,34 @@ export default function WebScanner() {
 
             {/* --- ADMIN BYPASS RIBBON --- */}
             {isAdminBypassed && (
-              <div className="border-3 border-double border-primary/30 bg-primary/5 p-2 text-[11px] font-bold flex flex-wrap justify-between items-center gap-2">
+              <div className="border-3 border-double border-primary/30 bg-primary/5 p-2 text-sm font-bold flex flex-wrap justify-between items-center gap-2">
                 <span className="text-primary font-semibold">
                   Admin Access Configured
                 </span>
                 <div className="flex gap-4">
                   <span>
                     Permissions:{" "}
-                    <strong className="text-emerald-500">Admin Override</strong>
+                    <strong className="text-emerald-500">Admin Access</strong>
                   </span>
                   <span>
                     Active Key:{" "}
                     {selectedEngine === "gemini" ? (
                       user?.hasGeminiKey ? (
                         <strong className="text-blue-500">
-                          [ Personal API Key ]
+                          Personal API Key
                         </strong>
                       ) : (
                         <strong className="text-amber-500">
-                          [ Server Default (.env) ]
+                          App's Default Key
                         </strong>
                       )
                     ) : user?.hasClaudeKey ? (
                       <strong className="text-orange-500">
-                        [ Personal API Key ]
+                        Personal API Key
                       </strong>
                     ) : (
                       <strong className="text-amber-500">
-                        [ Server Default (.env) ]
+                        App's Default Key
                       </strong>
                     )}
                   </span>
@@ -229,26 +229,22 @@ export default function WebScanner() {
 
             {/* --- STANDARD USER TELEMETRY RIBBON --- */}
             {!isAdminBypassed && (
-              <div className="border-3 border-double border-muted/50 bg-muted/10 p-2 text-[11px] font-bold flex flex-wrap justify-between items-center gap-2">
+              <div className="border-3 border-double border-muted/50 bg-muted/10 p-2 text-sm font-bold flex flex-wrap justify-between items-center gap-2">
                 <span className="opacity-70">Authentication Status</span>
                 <div className="flex gap-2">
                   {selectedEngine === "gemini" ? (
                     user?.hasGeminiKey ? (
-                      <span className="text-blue-500">
-                        [ Personal Key Active ]
-                      </span>
+                      <span className="text-blue-500">Personal Key Active</span>
                     ) : (
                       <span className="text-amber-500">
-                        [ Using Global Server Key ]
+                        Using Global Server Key
                       </span>
                     )
                   ) : user?.hasClaudeKey ? (
-                    <span className="text-orange-500">
-                      [ Personal Key Active ]
-                    </span>
+                    <span className="text-orange-500">Personal Key Active</span>
                   ) : (
                     <span className="text-amber-500">
-                      [ Using Global Server Key ]
+                      Using Global Server Key
                     </span>
                   )}
                 </div>
@@ -293,14 +289,12 @@ export default function WebScanner() {
               disabled={isLoading}
               className="w-full border-3 border-double bg-primary text-primary-foreground hover:bg-primary/90 font-bold text-xs py-3 disabled:opacity-50 transition-colors mt-2"
             >
-              {isLoading
-                ? `Dispatching to ${selectedEngine.toUpperCase()}...`
-                : "Start Scan"}
+              {isLoading ? `Dispatching to ${selectedEngine}...` : "Start Scan"}
             </button>
 
             {/* If the user is missing a personal key AND global is blocked, the 403 error dumps directly here gracefully */}
             {formErrors.global && (
-              <div className="border-3 border-double border-destructive bg-destructive/10 text-destructive p-3 text-xs font-bold text-center uppercase animate-in fade-in-50 duration-200">
+              <div className="border-3 border-double border-destructive bg-destructive/10 text-destructive p-3 text-xs font-bold text-center  animate-in fade-in-50 duration-200">
                 {formErrors.global}
               </div>
             )}

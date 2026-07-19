@@ -143,21 +143,19 @@ export default function ChatWithAI({
       <div className="border-b-3 border-double p-3 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card">
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-none bg-primary animate-pulse" />
-          <h3 className="text-xs font-bold uppercase tracking-wider">
-            AI Assistant
-          </h3>
+          <h3 className="text-sm font-bold  tracking-wider">AI Assistant</h3>
         </div>
 
         {/* MODEL SELECTOR */}
         <div className="flex items-center gap-2 w-full sm:w-auto">
-          <label className="text-[10px] font-bold uppercase opacity-80 whitespace-nowrap">
+          <label className="text-sm font-bold  opacity-80 whitespace-nowrap">
             Compute:
           </label>
           <select
             value={selectedModel}
             onChange={(e) => setSelectedModel(e.target.value)}
             disabled={isSending}
-            className="text-[10px] font-bold bg-background border-3 border-double px-2 py-1 outline-none w-full sm:w-auto focus:border-primary disabled:opacity-50 cursor-pointer"
+            className="text-sm font-bold bg-background border-3 border-double px-2 py-1 outline-none w-full sm:w-auto focus:border-primary disabled:opacity-50 cursor-pointer"
           >
             {availableModels.map((m) => (
               <option key={m.id} value={m.id}>
@@ -174,11 +172,11 @@ export default function ChatWithAI({
         className="h-64 overflow-y-auto p-4 flex flex-col gap-4 bg-background/50 scroll-smooth"
       >
         {isFetching && !history ? (
-          <div className="text-xs font-bold text-center opacity-70 animate-pulse mt-8">
-            [ ESTABLISHING CONNECTION... ]
+          <div className="text-sm font-bold text-center opacity-70 animate-pulse mt-8">
+            Loading chat history...
           </div>
         ) : history?.length === 0 ? (
-          <div className="text-[10px] font-bold text-center opacity-50 mt-8 uppercase">
+          <div className="text-sm font-bold text-center opacity-50 mt-8 ">
             Ask for remediation advice or an explanation of this specific
             finding.
           </div>
@@ -193,7 +191,7 @@ export default function ChatWithAI({
                   : "self-start items-start",
               )}
             >
-              <span className="text-[10px] font-bold uppercase opacity-50 mb-1">
+              <span className="text-sm font-bold  opacity-50 mb-1">
                 {msg.role === "user" ? "YOU" : `AI (${engine})`}
               </span>
               <div
@@ -220,7 +218,7 @@ export default function ChatWithAI({
 
         {isSending && (
           <div className="self-start flex flex-col max-w-[90%] w-full">
-            <span className="text-[10px] font-bold uppercase opacity-50 mb-1">
+            <span className="text-sm font-bold  opacity-50 mb-1">
               AI ({engine})
             </span>
             <div
@@ -233,15 +231,15 @@ export default function ChatWithAI({
             >
               <span className="animate-pulse">
                 {elapsedSeconds > 15
-                  ? "[ AI is running deep analysis... ]"
-                  : "[ Processing request... ]"}
+                  ? " AI is running deep analysis... "
+                  : "Processing request... "}
               </span>
               <span className="opacity-80 font-medium">
                 {elapsedSeconds > 15
                   ? "The AI provider is taking longer than expected. Please wait."
                   : "Sending prompt to AI model."}
               </span>
-              <span className="opacity-60 mt-1 font-mono text-[10px]">
+              <span className="opacity-60 mt-1 font-mono text-sm">
                 Time elapsed: {elapsedSeconds}s
               </span>
             </div>
@@ -266,17 +264,19 @@ export default function ChatWithAI({
         <button
           type="submit"
           disabled={isSending || !message.trim()}
-          className="border-t-3 sm:border-t-0 sm:border-l-3 border-double px-4 py-3 sm:py-0 text-xs font-bold uppercase hover:bg-primary hover:text-primary-foreground disabled:opacity-50 disabled:hover:bg-card disabled:hover:text-foreground transition-colors cursor-pointer"
+          className="border-t-3 sm:border-t-0 sm:border-l-3 border-double px-4 py-3 sm:py-0 text-xs font-bold  hover:bg-primary hover:text-primary-foreground disabled:opacity-50 disabled:hover:bg-card disabled:hover:text-foreground transition-colors cursor-pointer"
         >
-          [ SEND ]
+          Send
         </button>
       </form>
 
       {/* ERROR BANNER WITH MANUAL RETRY */}
       {chatError && (
         <div className="border-t-3 border-double border-destructive bg-destructive/10 p-3 flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center">
-          <div className="text-destructive text-[10px] font-bold uppercase flex flex-col gap-1">
-            <span className="animate-pulse">[ COMM LINK ERROR ]</span>
+          <div className="text-destructive text-sm font-bold  flex flex-col gap-1">
+            <span className="animate-pulse">
+              An Error occurred while sending :{" "}
+            </span>
             <span>{chatError}</span>
           </div>
 
@@ -287,9 +287,9 @@ export default function ChatWithAI({
                 handleSendMessage(lastAttemptedMessage);
               }}
               disabled={isSending}
-              className="whitespace-nowrap border-3 border-double border-destructive text-destructive px-3 py-1 text-[10px] font-bold hover:bg-destructive hover:text-destructive-foreground transition-colors disabled:opacity-50 cursor-pointer"
+              className="whitespace-nowrap border-3 border-double border-destructive text-destructive px-3 py-1 text-sm font-bold hover:bg-destructive hover:text-destructive-foreground transition-colors disabled:opacity-50 cursor-pointer"
             >
-              [ RETRY LAST MESSAGE ]
+              Retry last message
             </button>
           )}
         </div>

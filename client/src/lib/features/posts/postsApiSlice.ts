@@ -145,13 +145,58 @@ export const postsApiSlice = createApi({
       providesTags: ["Post"],
     }),
 
-    // --- UPDATED ALL TAGS ---
-    // Now optionally accepts a category to scope the tags down
-    getAllTags: builder.query<{ tags: string[] }, string | null | void>({
-      query: (category) => {
-        if (category && category !== "all") {
-          return `/posts/tags?category=${encodeURIComponent(category)}`;
+    getAllTags: builder.query<
+      { tags: string[] },
+      | {
+          category?: string | null;
+          subcategory?: string | null;
+          mine?: boolean;
         }
+      | string
+      | null
+      | void
+    >({
+      query: (args) => {
+        // SCENARIO 1: The argument is an object containing our new parameters
+        if (typeof args === "object" && args !== null) {
+          const hasCat =
+            args.category &&
+            args.category !== "all" &&
+            args.category.trim() !== "";
+          const hasSub = args.subcategory && args.subcategory.trim() !== "";
+          const isMine = args.mine === true;
+
+          const catStr = hasCat
+            ? encodeURIComponent(args.category as string)
+            : "";
+          const subStr = hasSub
+            ? encodeURIComponent(args.subcategory as string)
+            : "";
+
+          if (hasCat && hasSub && isMine) {
+            return `/posts/tags?category=${catStr}&subcategory=${subStr}&mine=true`;
+          } else if (hasCat && hasSub && !isMine) {
+            return `/posts/tags?category=${catStr}&subcategory=${subStr}`;
+          } else if (hasCat && !hasSub && isMine) {
+            return `/posts/tags?category=${catStr}&mine=true`;
+          } else if (hasCat && !hasSub && !isMine) {
+            return `/posts/tags?category=${catStr}`;
+          } else if (!hasCat && !hasSub && isMine) {
+            return `/posts/tags?mine=true`;
+          } else {
+            return `/posts/tags`;
+          }
+        }
+
+        // SCENARIO 2: The argument is just a simple string (legacy support)
+        if (typeof args === "string") {
+          if (args !== "all" && args.trim() !== "") {
+            return `/posts/tags?category=${encodeURIComponent(args.trim())}`;
+          } else {
+            return `/posts/tags`;
+          }
+        }
+
         return `/posts/tags`;
       },
       providesTags: ["Post"],
@@ -162,7 +207,7 @@ export const postsApiSlice = createApi({
 export const {
   useGetPostsQuery,
   useGetPostQuery,
-  useGetFilteredPostsQuery, // Exported the new unified query
+  useGetFilteredPostsQuery,
   useUploadMediaMutation,
   useCreatePostMutation,
   useUpdatePostMutation,

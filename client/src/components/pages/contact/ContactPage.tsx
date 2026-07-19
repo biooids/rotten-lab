@@ -5,16 +5,15 @@ import CornerFlourish from "@/components/shared/CornerFlourish";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import {
-  Mail,
-  MessageCircle,
-  Linkedin,
-  Instagram,
-  Twitter,
-  Copy,
-  ExternalLink,
-  AlertTriangle,
-  Github,
-} from "lucide-react";
+  FaEnvelope,
+  FaDiscord,
+  FaLinkedin,
+  FaInstagram,
+  FaXTwitter,
+  FaGithub,
+  FaCopy,
+  FaArrowUpRightFromSquare,
+} from "react-icons/fa6";
 import { useState } from "react";
 
 const contactLinks = [
@@ -22,7 +21,7 @@ const contactLinks = [
     label: "Email",
     value: "protocolsfarmer@gmail.com",
     href: "mailto:protocolsfarmer@gmail.com",
-    icon: Mail,
+    icon: FaEnvelope,
     description: "For serious inquiries, collaborations, or job offers.",
     isCopyable: true,
   },
@@ -30,7 +29,7 @@ const contactLinks = [
     label: "Discord",
     value: "protocols_farmer",
     href: "https://discord.com/users/protocols_farmer",
-    icon: MessageCircle,
+    icon: FaDiscord,
     description:
       "Fastest replies. DM me about projects, bugs, or just to chat.",
     isCopyable: true,
@@ -39,7 +38,7 @@ const contactLinks = [
     label: "LinkedIn",
     value: "Hwapyong Maniragaba Edouard",
     href: "https://www.linkedin.com/in/hwapyong-maniragaba-edouard-415961344/",
-    icon: Linkedin,
+    icon: FaLinkedin,
     description: "Professional profile. Connect if we've worked together.",
     isCopyable: false,
   },
@@ -47,7 +46,7 @@ const contactLinks = [
     label: "Instagram",
     value: "@protocols_farmer",
     href: "https://instagram.com/protocols_farmer",
-    icon: Instagram,
+    icon: FaInstagram,
     description:
       "Rare posts. Probably code screenshots and late-night thoughts.",
     isCopyable: false,
@@ -56,7 +55,7 @@ const contactLinks = [
     label: "X (Twitter)",
     value: "@protocolsfarmer",
     href: "https://x.com/protocolsfarmer",
-    icon: Twitter,
+    icon: FaXTwitter,
     description: "Tech takes, project updates, and complaining about bugs.",
     isCopyable: false,
   },
@@ -64,7 +63,7 @@ const contactLinks = [
     label: "GitHub",
     value: "protocols-farmer",
     href: "https://github.com/protocols-farmer",
-    icon: Github,
+    icon: FaGithub,
     description: "Code repositories, contributions, and open source work.",
     isCopyable: false,
   },
@@ -153,7 +152,7 @@ export default function ContactPage() {
                     </>
                   ) : (
                     <>
-                      <Copy className="h-3 w-3" />
+                      <FaCopy className="h-3 w-3" />
                       <span>Copy</span>
                     </>
                   )}
@@ -165,7 +164,7 @@ export default function ContactPage() {
                 className="border-3 border-double rounded-none h-8 text-xs gap-1"
               >
                 <a href={link.href} target="_blank" rel="noopener noreferrer">
-                  <ExternalLink className="h-3 w-3" />
+                  <FaArrowUpRightFromSquare className="h-3 w-3" />
                   <span>Open</span>
                 </a>
               </Button>

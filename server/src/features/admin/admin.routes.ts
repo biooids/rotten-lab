@@ -31,6 +31,12 @@ export const adminRoutes = async ({
     return true;
   }
 
+  // PATCH /api/v1/admin/ai-access
+  if (action === "ai-access" && req.method === "PATCH") {
+    await adminController.changeUserAiAccess(req, res);
+    return true;
+  }
+
   // DELETE /api/v1/admin/delete/:userId
   if (action === "delete" && req.method === "DELETE" && targetId) {
     await adminController.removeUser(req, res, targetId);

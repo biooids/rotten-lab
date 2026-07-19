@@ -176,7 +176,7 @@ export default function MaintenanceGuard({
 
             <div className="flex flex-col gap-3 text-center">
               <h1 className="bg-primary text-primary-foreground font-bold p-1 w-fit mx-auto text-sm flex items-center gap-2">
-                <ShieldAlert className="h-4 w-4" /> System Lockdown
+                System Lockdown
               </h1>
 
               <div className="border-l-3 border-double pl-3 text-left">

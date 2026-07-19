@@ -8,8 +8,6 @@ import { Input } from "@/components/ui/input";
 import CornerFlourish from "@/components/shared/CornerFlourish";
 import Logo from "@/components/shared/Logo";
 import {
-  User,
-  Key,
   Eye,
   EyeOff,
   LogIn,
@@ -253,7 +251,6 @@ export default function Authentication() {
             {/* Username */}
             <div className="flex flex-col gap-1">
               <label className="text-xs font-bold text-primary flex items-center gap-1">
-                <User className="h-3 w-3" />
                 Username
               </label>
               <Input
@@ -275,7 +272,6 @@ export default function Authentication() {
             {/* Password */}
             <div className="flex flex-col gap-1">
               <label className="text-xs font-bold text-primary flex items-center gap-1">
-                <Key className="h-3 w-3" />
                 Password
               </label>
               <div className="relative">
@@ -313,7 +309,6 @@ export default function Authentication() {
             {!isLogin && (
               <div className="flex flex-col gap-1">
                 <label className="text-xs font-bold text-primary flex items-center gap-1">
-                  <Key className="h-3 w-3" />
                   Confirm Password
                 </label>
                 <div className="relative">
