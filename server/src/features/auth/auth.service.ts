@@ -32,7 +32,9 @@ export const authService = {
         username, 
         profile_title,
         avatar_url,
-        role, 
+        role,
+        prefer_system_ai_key, 
+        has_system_ai_access,
         CASE 
           WHEN gemini_api_key IS NOT NULL AND gemini_api_key <> '' 
           THEN pgp_sym_decrypt(dearmor(gemini_api_key), $2) 
@@ -80,6 +82,7 @@ export const authService = {
     id: string,
     geminiApiKey: string | null,
     claudeApiKey: string | null,
+    preferSystemAiKey: boolean | null = null, // <--- ADDED THIS
   ) {
     const encryptionKey = process.env["DB_ENCRYPTION_KEY"] as string;
 
@@ -96,16 +99,25 @@ export const authService = {
           WHEN $3::text = '' THEN NULL
           ELSE claude_api_key 
         END,
+        prefer_system_ai_key = COALESCE($5, prefer_system_ai_key), 
         updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
       RETURNING id, username, role, updated_at;
     `;
+
+    console.log("4. SERVICE EXECUTING SQL WITH:", {
+      id,
+      geminiApiKey,
+      claudeApiKey,
+      preferSystemAiKey,
+    });
     try {
       return await pool.query(sql, [
         id,
         geminiApiKey,
         claudeApiKey,
         encryptionKey,
+        preferSystemAiKey,
       ]);
     } catch (error) {
       console.error("[AUTH_SERVICE FATAL ERROR - updateApiKeys]: ", error);

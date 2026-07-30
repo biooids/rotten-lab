@@ -72,6 +72,7 @@ export const updateSchema = z.object({
 
   geminiApiKey: z.string().trim().optional().or(z.literal("")),
   claudeApiKey: z.string().trim().optional().or(z.literal("")),
+  preferSystemAiKey: z.boolean().optional(), // <--- CHANGED: Added toggle to schema
 });
 
 export const changePasswordSchema = z

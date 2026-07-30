@@ -11,6 +11,8 @@ export interface User {
   password_hash: string;
   gemini_api_key?: string;
   claude_api_key?: string;
+  prefer_system_ai_key?: boolean; // ADDED
+  has_system_ai_access?: boolean; // ADDED
   created_at: Date;
   updated_at: Date;
 }
@@ -59,4 +61,5 @@ export interface UpdateAccountDTO {
   avatarUrl?: string;
   geminiApiKey?: string;
   claudeApiKey?: string;
+  preferSystemAiKey?: boolean; // ADDED
 }

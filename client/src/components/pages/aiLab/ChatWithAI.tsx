@@ -5,6 +5,12 @@ import { useState, useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+
+// <--- CHANGED: Added Redux and Link imports to support the key status badge
+import { useSelector } from "react-redux";
+import { RootState } from "@/lib/store";
+import Link from "next/link";
+
 import {
   useGetChatHistoryQuery,
   useSendChatMessageMutation,
@@ -13,9 +19,16 @@ import {
   useGetClaudeChatHistoryQuery,
   useSendClaudeChatMessageMutation,
 } from "@/lib/features/ai/claude/claudeApiSlice";
-import { GEMINI_MODEL_CATALOG } from "@/lib/features/ai/gemini/geminiTypes";
-import { CLAUDE_MODEL_CATALOG } from "@/lib/features/ai/claude/claudeTypes";
+import {
+  GEMINI_MODEL_CATALOG,
+  GEMINI_MODELS,
+} from "@/lib/features/ai/gemini/geminiTypes"; // <-- CHANGED: Imported GEMINI_MODELS
+import {
+  CLAUDE_MODEL_CATALOG,
+  CLAUDE_MODELS,
+} from "@/lib/features/ai/claude/claudeTypes";
 import CornerFlourish from "@/components/shared/CornerFlourish";
+import { getAiKeyStatus } from "@/lib/features/ai/aiKeyStatus";
 
 interface ChatWithAIProps {
   reportId: string;
@@ -28,6 +41,22 @@ export default function ChatWithAI({
   engine,
   findingId,
 }: ChatWithAIProps) {
+  // <--- CHANGED: Grab user from Redux state to determine key usage
+  const user = useSelector((state: RootState) => state.auth?.user);
+  const isAdmin = user?.role === "admin" || user?.role === "super_admin";
+  const canUseSystemKeys = user?.has_system_ai_access === true || isAdmin;
+
+  const hasPersonalKey =
+    engine === "gemini"
+      ? !!user?.hasGeminiKey
+      : engine === "claude"
+        ? !!user?.hasClaudeKey
+        : false;
+
+  const keyStatus = getAiKeyStatus(
+    user,
+    engine === "claude" ? "claude" : "gemini",
+  );
   // --- STATE ---
   const [message, setMessage] = useState("");
   const [chatError, setChatError] = useState("");
@@ -39,7 +68,9 @@ export default function ChatWithAI({
     engine === "claude" ? CLAUDE_MODEL_CATALOG : GEMINI_MODEL_CATALOG;
 
   const defaultModelId =
-    engine === "claude" ? "claude-haiku-4-5" : "gemini-2.5-flash";
+    engine === "claude"
+      ? CLAUDE_MODELS.HAIKU_LATEST
+      : GEMINI_MODELS.FLASH_LATEST;
   const [selectedModel, setSelectedModel] = useState<string>(defaultModelId);
 
   // --- RTK QUERY HOOKS ---
@@ -247,6 +278,57 @@ export default function ChatWithAI({
         )}
       </div>
 
+      {/* <--- CHANGED: Key Status Badge, driven by shared getAiKeyStatus helper */}
+      <div className="border-t-3 border-double bg-background p-2">
+        <div
+          className={cn(
+            "flex flex-col sm:flex-row items-start sm:items-center justify-between border-3 border-double p-2 gap-2",
+            keyStatus.type === "global-forced" &&
+              "border-orange-500 bg-orange-500/10",
+            (keyStatus.type === "personal-active" ||
+              keyStatus.type === "personal-only") &&
+              "border-blue-500 bg-blue-500/10",
+            keyStatus.type === "global-fallback" &&
+              "border-emerald-500 bg-emerald-500/10",
+            keyStatus.type === "restricted" &&
+              "border-destructive bg-destructive/10",
+          )}
+        >
+          <span
+            className={cn(
+              "text-xs font-bold flex items-center gap-2",
+              keyStatus.type === "global-forced" &&
+                "text-orange-600 dark:text-orange-500",
+              (keyStatus.type === "personal-active" ||
+                keyStatus.type === "personal-only") &&
+                "text-blue-600 dark:text-blue-500",
+              keyStatus.type === "global-fallback" &&
+                "text-emerald-600 dark:text-emerald-500",
+              keyStatus.type === "restricted" && "text-destructive",
+            )}
+          >
+            {keyStatus.label}
+          </span>
+          {keyStatus.ctaText && (
+            <Link
+              href="/auth/me"
+              className={cn(
+                "text-xs font-bold hover:underline",
+                keyStatus.type === "global-forced" &&
+                  "text-orange-600 dark:text-orange-500",
+                (keyStatus.type === "personal-active" ||
+                  keyStatus.type === "personal-only") &&
+                  "text-blue-600 dark:text-blue-500",
+                keyStatus.type === "global-fallback" &&
+                  "text-emerald-600 dark:text-emerald-500",
+                keyStatus.type === "restricted" && "text-destructive",
+              )}
+            >
+              {keyStatus.ctaText} in settings
+            </Link>
+          )}
+        </div>
+      </div>
       {/* INPUT AREA */}
       <form
         onSubmit={handleSendMessage}
@@ -257,13 +339,19 @@ export default function ChatWithAI({
           onChange={(e) => setMessage(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Ask about this vulnerability... (Shift+Enter for new line)"
-          disabled={isSending || isFetching}
-          className="flex-1 bg-transparent border-none outline-none p-3 text-xs resize-none min-h-[50px] disabled:opacity-50"
+          disabled={
+            isSending || isFetching || (!hasPersonalKey && !canUseSystemKeys)
+          }
+          className="flex-1 bg-transparent border-none outline-none p-3 text-xs resize-none min-h-12.5 disabled:opacity-50"
           rows={2}
         />
         <button
           type="submit"
-          disabled={isSending || !message.trim()}
+          disabled={
+            isSending ||
+            !message.trim() ||
+            (!hasPersonalKey && !canUseSystemKeys)
+          }
           className="border-t-3 sm:border-t-0 sm:border-l-3 border-double px-4 py-3 sm:py-0 text-xs font-bold  hover:bg-primary hover:text-primary-foreground disabled:opacity-50 disabled:hover:bg-card disabled:hover:text-foreground transition-colors cursor-pointer"
         >
           Send

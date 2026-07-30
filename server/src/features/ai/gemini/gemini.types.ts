@@ -1,9 +1,6 @@
 //src/features/ai/gemini/gemini.types.ts
-export type GeminiModelId =
-  | "gemini-2.5-pro"
-  | "gemini-2.5-flash"
-  | "gemini-2.5-flash-lite";
-
+import type { GeminiModelId } from "./gemini.config.js";
+export type { GeminiModelId };
 export interface ScanRequestDTO {
   targetUrl: string;
   secretAccessKey: string;
@@ -16,7 +13,8 @@ export interface DatabaseScanReport {
   scan_type: "url" | "repo";
   ai_provider: string;
   ai_model: string;
-  status: "pending" | "processing" | "completed" | "failed";
+  status: "pending" | "processing" | "completed" | "failed" | "cancelled";
+  status_message: string | null;
   engine_warnings: string[];
   scanned_by: string | null;
   total_chunks: number;

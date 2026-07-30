@@ -210,7 +210,15 @@ export default function AiDashboard() {
                               {report.ai_model}
                             </span>
                           )}
-                          <span className="text-sm font-bold truncate max-w-[200px] sm:max-w-xs group-hover:text-primary transition-colors">
+                          {/* NEW KEY TYPE BADGE INJECTED HERE */}
+                          {report.key_type && (
+                            <span className="text-sm font-bold border-3 border-double px-1.5 py-0.5 opacity-70">
+                              {report.key_type === "personal"
+                                ? "Personal Key"
+                                : "Global Key"}
+                            </span>
+                          )}
+                          <span className="text-sm font-bold truncate max-w-50 sm:max-w-xs group-hover:text-primary transition-colors">
                             {report.target_url}
                           </span>
                         </div>
@@ -228,14 +236,16 @@ export default function AiDashboard() {
                               ? "text-destructive border-destructive"
                               : report.status === "completed"
                                 ? "text-primary border-primary"
-                                : "text-primary border-primary animate-pulse",
+                                : report.status === "cancelled" // <--- ADDED CANCEL STATE
+                                  ? "text-muted-foreground border-muted-foreground"
+                                  : "text-primary border-primary animate-pulse",
                           )}
                         >
                           {report.status}
                         </span>
 
                         <span className="text-xs font-bold text-primary opacity-0 group-hover:opacity-100 transition-all duration-200 -translate-x-2 group-hover:translate-x-0 hidden sm:block whitespace-nowrap">
-                          [ VIEW ] &rarr;
+                          VIEW &rarr;
                         </span>
                       </div>
                     </button>
@@ -251,7 +261,7 @@ export default function AiDashboard() {
                     disabled={page === 1}
                     className="border-3 border-double px-3 py-1 text-xs font-bold hover:bg-primary hover:text-primary-foreground disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-foreground transition-colors"
                   >
-                    [ &lt; PREV ]
+                    &lt; PREV
                   </button>
                   <span className="text-xs font-bold">
                     PAGE {meta.currentPage} OF {meta.totalPages}
@@ -263,7 +273,7 @@ export default function AiDashboard() {
                     disabled={page === meta.totalPages}
                     className="border-3 border-double px-3 py-1 text-xs font-bold hover:bg-primary hover:text-primary-foreground disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-foreground transition-colors"
                   >
-                    [ NEXT &gt; ]
+                    NEXT &gt;
                   </button>
                 </div>
               )}

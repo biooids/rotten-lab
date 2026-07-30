@@ -6,10 +6,12 @@ import Link from "next/link";
 import {
   useGetReportQuery,
   useDownloadGeminiReportPdfMutation,
+  useCancelGeminiScanMutation, // <--- ADDED
 } from "@/lib/features/ai/gemini/geminiApiSlice";
 import {
   useGetClaudeReportQuery,
   useDownloadClaudeReportPdfMutation,
+  useCancelClaudeScanMutation, // <--- ADDED
 } from "@/lib/features/ai/claude/claudeApiSlice";
 import { triggerFileDownload } from "@/lib/features/ai/downloadHelper";
 import CornerFlourish from "@/components/shared/CornerFlourish";
@@ -41,6 +43,15 @@ export default function ReportDetails({
     useDownloadGeminiReportPdfMutation();
   const [downloadClaudePdf, { isLoading: isClaudePdfLoading }] =
     useDownloadClaudeReportPdfMutation();
+
+  // <--- ADDED START: Cancel Mutations
+  const [cancelGeminiScan, { isLoading: isCancellingGemini }] =
+    useCancelGeminiScanMutation();
+  const [cancelClaudeScan, { isLoading: isCancellingClaude }] =
+    useCancelClaudeScanMutation();
+  const isCancelling = isCancellingGemini || isCancellingClaude;
+  // <--- ADDED END
+
   const isPdfLoading = isGeminiPdfLoading || isClaudePdfLoading;
 
   const {
@@ -84,7 +95,8 @@ export default function ReportDetails({
     if (activeReport) {
       if (
         activeReport.status === "completed" ||
-        activeReport.status === "failed"
+        activeReport.status === "failed" ||
+        activeReport.status === "cancelled" // <--- ADDED: Stop polling if cancelled
       ) {
         setPollInterval(0);
       }
@@ -102,6 +114,27 @@ export default function ReportDetails({
     const interval = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(interval);
   }, [isScanRunning]);
+
+  // <--- ADDED START: Cancel Handler
+  const handleCancelScan = async () => {
+    if (
+      !window.confirm(
+        "Are you sure you want to abort this scan? This cannot be undone.",
+      )
+    )
+      return;
+    try {
+      if (engine === "claude") {
+        await cancelClaudeScan(reportId).unwrap();
+      } else {
+        await cancelGeminiScan(reportId).unwrap();
+      }
+    } catch (err: any) {
+      console.error("Failed to cancel scan:", err);
+      alert(err?.data?.error || err?.message || "Failed to cancel the scan.");
+    }
+  };
+  // <--- ADDED END
 
   const totalChunks = activeReport?.total_chunks || 0;
   const completedChunks = activeReport?.completed_chunks || 0;
@@ -261,6 +294,13 @@ export default function ReportDetails({
                 Model: {activeReport.ai_model}
               </span>
             )}
+
+            {activeReport?.key_type && (
+              <span className="text-sm font-bold border-3 border-double px-2 py-1 opacity-80">
+                Key:{" "}
+                {activeReport.key_type === "personal" ? "Personal" : "Global"}
+              </span>
+            )}
             <span
               className={cn(
                 "text-xs font-bold border-3 border-double px-3 py-1 w-fit ",
@@ -268,7 +308,9 @@ export default function ReportDetails({
                   ? "animate-pulse border-primary text-primary"
                   : activeReport?.status === "failed"
                     ? "border-destructive text-destructive"
-                    : "border-primary text-primary",
+                    : activeReport?.status === "cancelled" // <--- ADDED: Neutral styling for cancelled
+                      ? "border-muted-foreground text-muted-foreground"
+                      : "border-primary text-primary",
               )}
             >
               Status: {activeReport?.status || "Connecting..."}
@@ -356,6 +398,20 @@ export default function ReportDetails({
                     </span>
                   </div>
                 )}
+
+                {/* <--- ADDED START: CANCEL BUTTON */}
+                <div className="flex justify-end border-t-3 border-double border-foreground/10 pt-3 mt-1">
+                  <button
+                    type="button"
+                    onClick={handleCancelScan}
+                    disabled={isCancelling}
+                    className="border-3 border-double border-destructive text-destructive px-4 py-2 text-xs font-bold hover:bg-destructive hover:text-destructive-foreground disabled:opacity-50 transition-colors cursor-pointer"
+                  >
+                    Button{" "}
+                    {isCancelling ? "Cancelling..." : "[ X ] Cancel Scan"}
+                  </button>
+                </div>
+                {/* <--- ADDED END */}
               </div>
             )}
           </div>
@@ -415,8 +471,15 @@ export default function ReportDetails({
               )}
 
             {activeFindings.length === 0 ? (
-              <div className="border-3 border-double p-8 text-center text-sm font-bold bg-primary/5 text-primary">
-                No vulnerabilities detected during the scan.
+              <div className="border-3 border-double p-8 text-center text-sm font-bold bg-primary/5 text-primary flex flex-col gap-2">
+                <span>No vulnerabilities detected during the scan.</span>
+                {/* <--- ADDED START: Display 0-finding status message */}
+                {activeReport?.status_message && (
+                  <span className="opacity-80 text-xs block mt-2">
+                    Backend Log: {activeReport.status_message}
+                  </span>
+                )}
+                {/* <--- ADDED END */}
               </div>
             ) : (
               <div className="flex flex-col gap-4">
@@ -481,6 +544,15 @@ export default function ReportDetails({
             <span className="text-xs font-bold text-destructive">
               Scan Failed{" "}
             </span>
+
+            {/* <--- ADDED START: DISPLAY EXACT CRASH LOG */}
+            {activeReport?.status_message && (
+              <div className="text-sm font-bold opacity-90 border-l-2 border-destructive pl-3 py-1">
+                {activeReport.status_message}
+              </div>
+            )}
+            {/* <--- ADDED END */}
+
             <ul className="list-disc list-inside text-xs font-bold opacity-80 space-y-1">
               {activeReport.engine_warnings &&
               activeReport.engine_warnings.length > 0 ? (
@@ -493,6 +565,19 @@ export default function ReportDetails({
                 </li>
               )}
             </ul>
+          </div>
+        )}
+
+        {!isScanRunning && activeReport?.status === "cancelled" && (
+          <div className="border-3 border-double border-muted-foreground p-4 bg-muted/20 flex flex-col gap-3 mt-2">
+            <span className="text-xs font-bold text-muted-foreground">
+              Scan Cancelled
+            </span>
+            {activeReport?.status_message && (
+              <div className="text-sm font-bold opacity-90 border-l-2 border-muted-foreground pl-3 py-1">
+                {activeReport.status_message}
+              </div>
+            )}
           </div>
         )}
       </div>

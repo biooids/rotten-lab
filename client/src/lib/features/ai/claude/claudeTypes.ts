@@ -1,11 +1,20 @@
 //src/lib/features/ai/claude/claudeTypes.ts
 export type SeverityLevel = "Low" | "Medium" | "High" | "Critical";
-export type ScanStatus = "pending" | "processing" | "completed" | "failed";
 
-export type ClaudeModelId =
-  | "claude-sonnet-4-6"
-  | "claude-opus-4-7"
-  | "claude-haiku-4-5";
+export type ScanStatus =
+  | "pending"
+  | "processing"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export const CLAUDE_MODELS = {
+  SONNET_LATEST: "claude-sonnet-4-6",
+  OPUS_LATEST: "claude-opus-4-7",
+  HAIKU_LATEST: "claude-haiku-4-5",
+} as const;
+
+export type ClaudeModelId = (typeof CLAUDE_MODELS)[keyof typeof CLAUDE_MODELS];
 
 export interface ClaudeModelInfo {
   id: ClaudeModelId;
@@ -17,7 +26,7 @@ export interface ClaudeModelInfo {
 
 export const CLAUDE_MODEL_CATALOG: readonly ClaudeModelInfo[] = [
   {
-    id: "claude-sonnet-4-6",
+    id: CLAUDE_MODELS.SONNET_LATEST,
     label: "Sonnet 4.6",
     tagline: "Balanced default",
     strengths:
@@ -25,7 +34,7 @@ export const CLAUDE_MODEL_CATALOG: readonly ClaudeModelInfo[] = [
     tradeoff: "Medium cost, medium speed.",
   },
   {
-    id: "claude-opus-4-7",
+    id: CLAUDE_MODELS.OPUS_LATEST,
     label: "Opus 4.7",
     tagline: "Deepest analysis",
     strengths:
@@ -33,7 +42,7 @@ export const CLAUDE_MODEL_CATALOG: readonly ClaudeModelInfo[] = [
     tradeoff: "Slower and most expensive. Use on hard targets.",
   },
   {
-    id: "claude-haiku-4-5",
+    id: CLAUDE_MODELS.HAIKU_LATEST,
     label: "Haiku 4.5",
     tagline: "Fastest & cheapest",
     strengths: "Snappy turnaround on small repos and quick web sweeps.",
@@ -41,8 +50,7 @@ export const CLAUDE_MODEL_CATALOG: readonly ClaudeModelInfo[] = [
   },
 ] as const;
 
-export const DEFAULT_CLAUDE_MODEL: ClaudeModelId = "claude-sonnet-4-6";
-
+export const DEFAULT_CLAUDE_MODEL: ClaudeModelId = CLAUDE_MODELS.SONNET_LATEST;
 export interface ScanRequestDTO {
   targetUrl: string;
   model?: ClaudeModelId;
@@ -68,12 +76,14 @@ export interface ScanReport {
   ai_provider: string;
   ai_model: string;
   status: ScanStatus;
+  status_message?: string;
   engine_warnings: string[];
   scanned_by: string | null;
   total_chunks: number;
   completed_chunks: number;
   created_at: string;
   updated_at: string;
+  key_type?: "global" | "personal";
 }
 
 export interface InitScanResponse {
@@ -81,7 +91,6 @@ export interface InitScanResponse {
   reportId: string;
 }
 
-// --- META AND PARAM TYPES FOR PAGINATION ---
 export interface PaginationMeta {
   currentPage: number;
   totalPages: number;
@@ -102,7 +111,6 @@ export interface ReportQueryParams {
   limit?: number;
 }
 
-// --- RESPONSES WITH META ---
 export interface ScanResponse {
   message: string;
   data: {
@@ -118,7 +126,6 @@ export interface ScanHistoryResponse {
   meta?: PaginationMeta;
 }
 
-// --- NEW CHAT SYSTEM TYPES ---
 export type ChatRole = "user" | "ai";
 
 export interface ReportChatSession {
@@ -128,6 +135,7 @@ export interface ReportChatSession {
   role: ChatRole;
   message: string;
   created_at: string;
+  key_type?: "global" | "personal";
 }
 
 export interface ChatMessageRequestDTO {

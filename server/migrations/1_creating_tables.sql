@@ -128,13 +128,18 @@ CREATE TABLE audit_logs (
 );
 
 -- --- 5.3. THE AI SCAN REPORTS TABLE ---
+-- --- 5.3. THE AI SCAN REPORTS TABLE ---
 CREATE TABLE scan_reports (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     target_url VARCHAR(2048) NOT NULL CHECK (char_length(target_url) <= 2048),
     scan_type VARCHAR(20) NOT NULL CHECK (scan_type IN ('url', 'repo')),
     ai_provider VARCHAR(50) NOT NULL DEFAULT 'gemini', 
-    ai_model VARCHAR(50) NOT NULL DEFAULT 'gemini-2.5-flash', 
-    status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'completed', 'failed')),
+    ai_model VARCHAR(50) NOT NULL DEFAULT 'gemini-3.6-flash', 
+    key_type VARCHAR(20) NOT NULL DEFAULT 'global' CHECK (key_type IN ('global', 'personal')),
+    
+    status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'completed', 'failed', 'cancelled')),
+        status_message TEXT, 
+    
     engine_warnings TEXT[] DEFAULT '{}',
     scanned_by UUID REFERENCES users(id) ON DELETE SET NULL,
     total_chunks INTEGER NOT NULL DEFAULT 0,
@@ -167,11 +172,12 @@ CREATE TABLE scan_findings (
 CREATE TABLE ai_token_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     admin_id UUID REFERENCES users(id) ON DELETE SET NULL,
-    model_used VARCHAR(50) NOT NULL DEFAULT 'gemini-2.5-flash',
+    model_used VARCHAR(50) NOT NULL DEFAULT 'gemini-3.6-flash',
     prompt_tokens INTEGER NOT NULL CHECK (prompt_tokens >= 0),
     completion_tokens INTEGER NOT NULL CHECK (completion_tokens >= 0),
     total_tokens INTEGER NOT NULL CHECK (total_tokens >= 0),
-    action_type VARCHAR(50) NOT NULL CHECK (action_type IN ('URL_SCAN', 'REPO_SCAN')),
+    action_type VARCHAR(50) NOT NULL CHECK (action_type IN ('URL_SCAN', 'REPO_SCAN', 'CHAT')),
+    key_type VARCHAR(20) NOT NULL DEFAULT 'global' CHECK (key_type IN ('global', 'personal')),
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -184,6 +190,7 @@ CREATE TABLE report_chats (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     role chat_role NOT NULL,
     message TEXT NOT NULL CHECK (char_length(trim(message)) > 0 AND char_length(message) <= 100000),
+    key_type VARCHAR(20) NOT NULL DEFAULT 'global' CHECK (key_type IN ('global', 'personal')),
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 

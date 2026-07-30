@@ -1,11 +1,23 @@
 //src/lib/features/ai/gemini/geminiTypes.ts
-export type SeverityLevel = "Low" | "Medium" | "High" | "Critical";
-export type ScanStatus = "pending" | "processing" | "completed" | "failed";
 
-export type GeminiModelId =
-  | "gemini-2.5-pro"
-  | "gemini-2.5-flash"
-  | "gemini-2.5-flash-lite";
+export type SeverityLevel = "Low" | "Medium" | "High" | "Critical";
+
+export type ScanStatus =
+  | "pending"
+  | "processing"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+// --- START OF CHANGES ---
+export const GEMINI_MODELS = {
+  FLASH_LATEST: "gemini-3.6-flash",
+  FLASH_LITE: "gemini-3.5-flash-lite",
+  PRO_STABLE: "gemini-2.5-pro",
+} as const;
+
+export type GeminiModelId = (typeof GEMINI_MODELS)[keyof typeof GEMINI_MODELS];
+// --- END OF CHANGES ---
 
 export interface GeminiModelInfo {
   id: GeminiModelId;
@@ -17,14 +29,14 @@ export interface GeminiModelInfo {
 
 export const GEMINI_MODEL_CATALOG: readonly GeminiModelInfo[] = [
   {
-    id: "gemini-2.5-flash",
-    label: "Flash 2.5",
+    id: GEMINI_MODELS.FLASH_LATEST,
+    label: "Flash 3.6",
     tagline: "Free-tier default",
     strengths: "Fast & cheap. Solid for most scans on the free tier.",
     tradeoff: "Less depth on complex multi-step reasoning.",
   },
   {
-    id: "gemini-2.5-pro",
+    id: GEMINI_MODELS.PRO_STABLE,
     label: "Pro 2.5",
     tagline: "Deepest analysis (paid)",
     strengths:
@@ -32,15 +44,15 @@ export const GEMINI_MODEL_CATALOG: readonly GeminiModelInfo[] = [
     tradeoff: "Paid tier. Slower and pricier than Flash.",
   },
   {
-    id: "gemini-2.5-flash-lite",
-    label: "Flash-Lite 2.5",
+    id: GEMINI_MODELS.FLASH_LITE,
+    label: "Flash-Lite 3.5",
     tagline: "Cheapest & fastest",
     strengths: "Snap analyses on small repos and quick web sweeps.",
     tradeoff: "Most aggressive trade-off on depth.",
   },
 ] as const;
 
-export const DEFAULT_GEMINI_MODEL: GeminiModelId = "gemini-2.5-flash";
+export const DEFAULT_GEMINI_MODEL: GeminiModelId = GEMINI_MODELS.FLASH_LATEST;
 
 export interface ScanRequestDTO {
   targetUrl: string;
@@ -67,10 +79,12 @@ export interface ScanReport {
   ai_provider: string;
   ai_model: string;
   status: ScanStatus;
+  status_message?: string;
   engine_warnings: string[];
   scanned_by: string | null;
   total_chunks: number;
   completed_chunks: number;
+  key_type?: "global" | "personal"; // <-- ADD THIS
   created_at: string;
   updated_at: string;
 }
@@ -127,6 +141,7 @@ export interface ReportChatSession {
   role: ChatRole;
   message: string;
   created_at: string;
+  key_type?: "global" | "personal"; // <-- ADD THIS
 }
 
 export interface ChatMessageRequestDTO {

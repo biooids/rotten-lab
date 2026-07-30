@@ -1,4 +1,4 @@
-//src/components/pages/auth/me/Me.tsx
+// src/components/pages/auth/me/Me.tsx
 "use client";
 
 import React, { useState, useEffect } from "react";
@@ -95,6 +95,11 @@ export default function Me() {
   const [showClaudeKey, setShowClaudeKey] = useState(false);
   const [apiKeyFormError, setApiKeyFormError] = useState("");
 
+  // <--- CHANGED: Added state to track if the user wants to prefer system keys
+  const [preferSystemAiKey, setPreferSystemAiKey] = useState<boolean>(
+    user?.preferSystemAiKey === true,
+  );
+
   const [geminiStatus, setGeminiStatus] = useState<{
     type: "idle" | "success" | "error";
     text: string;
@@ -135,6 +140,9 @@ export default function Me() {
       setUsername(user.username);
       setProfileTitle(user.profile_title || "");
       setAvatarUrl(user.avatar_url || "");
+
+      // <--- CHANGED: Sync toggle state with user data on load
+      setPreferSystemAiKey(user.preferSystemAiKey === true);
     }
   }, [user, isEditingOther]);
 
@@ -311,13 +319,19 @@ export default function Me() {
       hasUpdates = true;
     }
 
+    if (preferSystemAiKey !== (user?.preferSystemAiKey === true)) {
+      payload.preferSystemAiKey = preferSystemAiKey;
+      hasUpdates = true;
+    }
+
     if (!hasUpdates) {
-      setApiKeyFormError("Please enter a key to update.");
+      setApiKeyFormError("Make a change to update your settings.");
       return;
     }
 
     setUpdatingTarget("keys");
     try {
+      console.log("1. FRONTEND SENDING PAYLOAD:", payload);
       const result = await updateAccount(payload).unwrap();
       if (!isEditingOther) {
         dispatch(updateUser(result.user));
@@ -338,13 +352,23 @@ export default function Me() {
     setApiKeyFormError("");
     const payload: any = { id: targetId || undefined };
 
+    // Define the remaining keys BEFORE the engine check
+    let remainingGemini = engine === "gemini" ? false : !!user?.hasGeminiKey;
+    let remainingClaude = engine === "claude" ? false : !!user?.hasClaudeKey;
+
     if (engine === "gemini") {
       payload.geminiApiKey = "";
       setGeminiStatus({ type: "idle", text: "" });
     }
+
     if (engine === "claude") {
       payload.claudeApiKey = "";
       setClaudeStatus({ type: "idle", text: "" });
+    }
+
+    if (!remainingGemini && !remainingClaude) {
+      payload.preferSystemAiKey = false;
+      setPreferSystemAiKey(false);
     }
 
     setUpdatingTarget(engine === "gemini" ? "clear-gemini" : "clear-claude");
@@ -514,7 +538,7 @@ export default function Me() {
           </div>
 
           <div className="border-l-3 border-double pl-3 flex flex-col gap-5">
-            {/* Avatar Row (Completely Updated for Better UX) */}
+            {/* Avatar Row */}
             <div className="flex flex-col gap-1">
               <label className="text-sm font-bold text-primary flex items-center justify-between gap-1">
                 <span className="flex items-center gap-1">
@@ -546,6 +570,7 @@ export default function Me() {
                   maxLength={2048}
                   className="border-3 border-double rounded-none text-sm flex-1 disabled:opacity-50"
                   disabled={isAnyLoading}
+                  autoComplete="off"
                 />
                 <Button
                   type="button"
@@ -629,6 +654,7 @@ export default function Me() {
                 placeholder="e.g. Back End Dev"
                 className="border-3 border-double rounded-none text-sm"
                 disabled={isAnyLoading}
+                autoComplete="off"
               />
               {fieldErrors.profileTitle && (
                 <p className="text-sm text-destructive font-bold">
@@ -658,6 +684,7 @@ export default function Me() {
                 placeholder="protocols_farmer"
                 className="border-3 border-double rounded-none text-sm"
                 disabled={isAnyLoading}
+                autoComplete="off"
               />
               {fieldErrors.username && (
                 <p className="text-sm text-destructive font-bold">
@@ -710,6 +737,96 @@ export default function Me() {
               premium AI models for security audits. Keys are encrypted at rest
               and never displayed after saving.
             </p>
+            {(() => {
+              const canUseSystemKeys =
+                user?.has_system_ai_access === true || isAdmin;
+              const hasAnyPersonalKey =
+                !!user?.hasGeminiKey || !!user?.hasClaudeKey;
+              const isFallingBackToSystem =
+                canUseSystemKeys && !hasAnyPersonalKey;
+
+              return (
+                <>
+                  {canUseSystemKeys && (
+                    <div className="flex flex-col gap-2 mb-2 mt-1">
+                      {user?.preferSystemAiKey ? (
+                        <div className="border-3 border-double border-primary bg-primary/10 p-3">
+                          <p className="text-sm font-bold text-primary">
+                            System Default Active: You are currently routing
+                            scans through the global system keys. Any personal
+                            keys below will be bypassed.
+                          </p>
+                        </div>
+                      ) : isFallingBackToSystem ? (
+                        <div className="border-3 border-double border-amber-500 bg-amber-500/10 p-3">
+                          <p className="text-sm font-bold text-amber-500">
+                            Fallback Active: You have no personal keys saved.
+                            Scans will use the global system keys by default.
+                          </p>
+                        </div>
+                      ) : null}
+
+                      {/* ADDED: only show the toggle when there's an actual personal key to ignore */}
+                      {hasAnyPersonalKey && (
+                        <label
+                          className={cn(
+                            "flex items-center gap-3 cursor-pointer p-3 border-3 border-double transition-colors w-fit",
+                            preferSystemAiKey
+                              ? "bg-primary/10 border-primary"
+                              : "bg-muted/30 hover:bg-muted/50",
+                          )}
+                        >
+                          <div
+                            className={cn(
+                              "w-4 h-4 border-2 flex items-center justify-center transition-colors",
+                              preferSystemAiKey
+                                ? "border-primary bg-primary"
+                                : "border-muted-foreground bg-transparent",
+                            )}
+                          >
+                            {preferSystemAiKey && (
+                              <Check className="h-3 w-3 text-primary-foreground" />
+                            )}
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={preferSystemAiKey}
+                            onChange={(e) => {
+                              console.log(
+                                "Checkbox clicked! New state:",
+                                e.target.checked,
+                              );
+                              setPreferSystemAiKey(e.target.checked);
+                            }}
+                            className="hidden"
+                            disabled={isAnyLoading}
+                          />
+                          <span
+                            className={cn(
+                              "text-sm font-bold select-none",
+                              preferSystemAiKey ? "text-primary" : "",
+                            )}
+                          >
+                            Force use of default system keys (Ignore personal
+                            keys)
+                          </span>
+                        </label>
+                      )}
+                    </div>
+                  )}
+
+                  {!canUseSystemKeys && !hasAnyPersonalKey && (
+                    <div className="border-3 border-double border-destructive bg-destructive/10 p-3 mt-1 mb-2">
+                      <p className="text-sm font-bold text-destructive flex items-center gap-2">
+                        <ShieldAlert className="h-4 w-4 shrink-0" />
+                        AI Access Restricted: You must provide a personal API
+                        key below to run scans.
+                      </p>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
 
             {/* Gemini Input */}
             <div className="flex flex-col gap-1">
@@ -718,15 +835,24 @@ export default function Me() {
                   Google Gemini API Key
                 </label>
                 <div className="flex gap-3 items-center">
-                  {user?.hasGeminiKey ? (
-                    <span className="text-sm font-bold text-primary">
-                      Personal Key
+                  {user?.prefer_system_ai_key &&
+                  (user?.has_system_ai_access || isAdmin) ? (
+                    <span className="text-sm font-bold text-blue-500">
+                      🟢 System Key Active
                     </span>
-                  ) : isAdmin ? (
-                    <span className="text-sm font-bold text-primary">
-                      System Key
+                  ) : user?.hasGeminiKey ? (
+                    <span className="text-sm font-bold text-blue-500">
+                      🔵 Personal Key Active
                     </span>
-                  ) : null}
+                  ) : user?.has_system_ai_access || isAdmin ? (
+                    <span className="text-sm font-bold text-blue-500">
+                      🟢 System Fallback
+                    </span>
+                  ) : (
+                    <span className="text-sm font-bold text-destructive opacity-80">
+                      🔴 No Access (Key Required)
+                    </span>
+                  )}
 
                   {(user?.hasGeminiKey || isAdmin) && (
                     <button
@@ -763,6 +889,7 @@ export default function Me() {
                   }
                   className="border-3 border-double rounded-none text-sm pr-10 border-blue-500/50 focus-visible:ring-blue-500"
                   disabled={isAnyLoading}
+                  autoComplete="off"
                 />
                 <button
                   type="button"
@@ -800,25 +927,34 @@ export default function Me() {
             {/* Claude Input */}
             <div className="flex flex-col gap-1 mt-2">
               <div className="flex items-center justify-between gap-2 flex-wrap">
-                <label className="text-sm font-bold text-orange-500">
+                <label className="text-sm font-bold text-amber-500">
                   Anthropic Claude API Key
                 </label>
                 <div className="flex gap-3 items-center">
-                  {user?.hasClaudeKey ? (
-                    <span className="text-sm font-bold text-primary">
-                      Personal Key
+                  {user?.prefer_system_ai_key &&
+                  (user?.has_system_ai_access || isAdmin) ? (
+                    <span className="text-sm font-bold text-amber-500">
+                      🟢 System Key Active
                     </span>
-                  ) : isAdmin ? (
-                    <span className="text-sm font-bold text-primary">
-                      System Key
+                  ) : user?.hasClaudeKey ? (
+                    <span className="text-sm font-bold text-amber-500">
+                      🔵 Personal Key Active
                     </span>
-                  ) : null}
+                  ) : user?.has_system_ai_access || isAdmin ? (
+                    <span className="text-sm font-bold text-amber-500">
+                      🟢 System Fallback
+                    </span>
+                  ) : (
+                    <span className="text-sm font-bold text-destructive opacity-80">
+                      🔴 No Access (Key Required)
+                    </span>
+                  )}
 
                   {(user?.hasClaudeKey || isAdmin) && (
                     <button
                       onClick={handleTestClaude}
                       disabled={isAnyLoading}
-                      className="text-sm font-bold border-3 border-double cursor-pointer p-1 text-orange-500 hover:text-orange-500/80 outline-none flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="text-sm font-bold border-3 border-double cursor-pointer p-1 text-amber-500 hover:text-amber-500/80 outline-none flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {isTestingClaude ? "Pinging..." : "Test Key"}
                     </button>
@@ -847,13 +983,14 @@ export default function Me() {
                       ? "Enter new key to overwrite existing..."
                       : "sk-ant-..."
                   }
-                  className="border-3 border-double rounded-none text-sm pr-10 border-orange-500/50 focus-visible:ring-orange-500"
+                  className="border-3 border-double rounded-none text-sm pr-10 border-amber-500/50 focus-visible:ring-amber-500"
                   disabled={isAnyLoading}
+                  autoComplete="off"
                 />
                 <button
                   type="button"
                   onClick={() => setShowClaudeKey(!showClaudeKey)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-orange-500 hover:text-orange-500/70 disabled:opacity-50"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-amber-500 hover:text-amber-500/70 disabled:opacity-50"
                   tabIndex={-1}
                   disabled={isAnyLoading}
                 >
@@ -933,6 +1070,7 @@ export default function Me() {
                     placeholder="Enter current password"
                     className="border-3 border-double rounded-none text-sm pr-10"
                     disabled={isAnyLoading}
+                    autoComplete="new-password"
                   />
                   <button
                     type="button"
@@ -980,6 +1118,7 @@ export default function Me() {
                   placeholder="Min. 6 characters"
                   className="border-3 border-double rounded-none text-sm pr-10"
                   disabled={isAnyLoading}
+                  autoComplete="new-password"
                 />
                 <button
                   type="button"
@@ -1013,6 +1152,7 @@ export default function Me() {
                 placeholder="Repeat new password"
                 className="border-3 border-double rounded-none text-sm"
                 disabled={isAnyLoading}
+                autoComplete="new-password"
               />
               {fieldErrors.confirmPassword && (
                 <p className="text-sm text-destructive font-bold">

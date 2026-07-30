@@ -22,7 +22,7 @@ export const adminService = {
   async getAllUsers() {
     try {
       const sql = `
-        SELECT id, username, role, has_system_ai_access, created_at, updated_at
+        SELECT id, username, role, has_system_ai_access, prefer_system_ai_key, created_at, updated_at
         FROM users 
         ORDER BY created_at DESC;
       `;

@@ -68,6 +68,7 @@ export const authApiSlice = createApi({
         avatarUrl?: string;
         geminiApiKey?: string;
         claudeApiKey?: string;
+        preferSystemAiKey?: boolean; // <--- CHANGED: Added toggle to type
         id?: string;
       }
     >({
@@ -77,6 +78,7 @@ export const authApiSlice = createApi({
         avatarUrl,
         geminiApiKey,
         claudeApiKey,
+        preferSystemAiKey, // <--- CHANGED: Extracted from arguments
         id,
       }) => ({
         url: id ? `/auth/update?id=${id}` : "/auth/update",
@@ -87,6 +89,7 @@ export const authApiSlice = createApi({
           avatarUrl,
           geminiApiKey,
           claudeApiKey,
+          preferSystemAiKey, // <--- CHANGED: Added to request body
         },
       }),
     }),

@@ -24,6 +24,7 @@ import GeminiModelPicker from "./GeminiModelPicker";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import AuthGuard from "@/components/shared/AuthGuard";
+import { getAiKeyStatus } from "@/lib/features/ai/aiKeyStatus";
 
 export default function RepoScanner() {
   const router = useRouter();
@@ -39,8 +40,14 @@ export default function RepoScanner() {
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
   const user = useSelector((state: RootState) => state.auth?.user);
-  const isAdminBypassed =
-    user?.role === "admin" || user?.role === "super_admin";
+
+  const keyStatus = getAiKeyStatus(user, selectedEngine);
+  const hasPersonalKey =
+    selectedEngine === "gemini" ? !!user?.hasGeminiKey : !!user?.hasClaudeKey;
+  const canUseSystemKeys =
+    user?.has_system_ai_access === true ||
+    user?.role === "admin" ||
+    user?.role === "super_admin";
 
   const [scanRepoGemini, { isLoading: isGeminiLoading }] =
     useScanRepoMutation();
@@ -191,67 +198,6 @@ export default function RepoScanner() {
               </div>
             </div>
 
-            {/* --- ADMIN BYPASS RIBBON --- */}
-            {isAdminBypassed && (
-              <div className="border-3 border-double border-primary/30 bg-primary/5 p-2 text-sm font-bold flex flex-wrap justify-between items-center gap-2">
-                <span className="text-primary font-semibold">
-                  Admin Access Configured
-                </span>
-                <div className="flex gap-4">
-                  <span>
-                    Permissions:{" "}
-                    <strong className="text-emerald-500">Admin Override</strong>
-                  </span>
-                  <span>
-                    Active Key:{" "}
-                    {selectedEngine === "gemini" ? (
-                      user?.hasGeminiKey ? (
-                        <strong className="text-blue-500">
-                          [ Personal API Key ]
-                        </strong>
-                      ) : (
-                        <strong className="text-amber-500">
-                          [ Server Default (.env) ]
-                        </strong>
-                      )
-                    ) : user?.hasClaudeKey ? (
-                      <strong className="text-orange-500">
-                        [ Personal API Key ]
-                      </strong>
-                    ) : (
-                      <strong className="text-amber-500">
-                        [ Server Default (.env) ]
-                      </strong>
-                    )}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {/* --- STANDARD USER TELEMETRY RIBBON --- */}
-            {!isAdminBypassed && (
-              <div className="border-3 border-double border-muted/50 bg-muted/10 p-2 text-sm font-bold flex flex-wrap justify-between items-center gap-2">
-                <span className="opacity-70">Authentication Status</span>
-                <div className="flex gap-2">
-                  {selectedEngine === "gemini" ? (
-                    user?.hasGeminiKey ? (
-                      <span className="text-blue-500">Personal Key Active</span>
-                    ) : (
-                      <span className="text-amber-500">
-                        Using Global Server Key
-                      </span>
-                    )
-                  ) : user?.hasClaudeKey ? (
-                    <span className="text-orange-500">Personal Key Active</span>
-                  ) : (
-                    <span className="text-amber-500">
-                      Using Global Server Key
-                    </span>
-                  )}
-                </div>
-              </div>
-            )}
-
             {selectedEngine === "claude" && (
               <ClaudeModelPicker
                 value={claudeModel}
@@ -285,9 +231,61 @@ export default function RepoScanner() {
               )}
             </div>
 
+            <div className="mt-2">
+              <div
+                className={cn(
+                  "flex flex-col sm:flex-row items-start sm:items-center justify-between border-3 border-double p-3 gap-2",
+                  keyStatus.type === "global-forced" &&
+                    "border-orange-500 bg-orange-500/10",
+                  keyStatus.type === "personal-active" &&
+                    "border-blue-500 bg-blue-500/10",
+                  keyStatus.type === "personal-only" &&
+                    "border-blue-500 bg-blue-500/10",
+                  keyStatus.type === "global-fallback" &&
+                    "border-emerald-500 bg-emerald-500/10",
+                  keyStatus.type === "restricted" &&
+                    "border-destructive bg-destructive/10",
+                )}
+              >
+                <span
+                  className={cn(
+                    "text-sm font-bold flex items-center gap-2",
+                    keyStatus.type === "global-forced" &&
+                      "text-orange-600 dark:text-orange-500",
+                    (keyStatus.type === "personal-active" ||
+                      keyStatus.type === "personal-only") &&
+                      "text-blue-600 dark:text-blue-500",
+                    keyStatus.type === "global-fallback" &&
+                      "text-emerald-600 dark:text-emerald-500",
+                    keyStatus.type === "restricted" && "text-destructive",
+                  )}
+                >
+                  {keyStatus.label}
+                </span>
+                {keyStatus.ctaText && (
+                  <Link
+                    href="/me"
+                    className={cn(
+                      "text-xs font-bold hover:underline",
+                      keyStatus.type === "global-forced" &&
+                        "text-orange-600 dark:text-orange-500",
+                      (keyStatus.type === "personal-active" ||
+                        keyStatus.type === "personal-only") &&
+                        "text-blue-600 dark:text-blue-500",
+                      keyStatus.type === "global-fallback" &&
+                        "text-emerald-600 dark:text-emerald-500",
+                      keyStatus.type === "restricted" && "text-destructive",
+                    )}
+                  >
+                    {keyStatus.ctaText} in settings
+                  </Link>
+                )}
+              </div>
+            </div>
+
             <button
               type="submit"
-              disabled={isLoading}
+              disabled={isLoading || (!hasPersonalKey && !canUseSystemKeys)}
               className="w-full border-3 border-double bg-primary text-primary-foreground hover:bg-primary/90 font-bold text-xs py-3 disabled:opacity-50 transition-colors mt-2"
             >
               {isLoading
@@ -295,7 +293,6 @@ export default function RepoScanner() {
                 : "Execute Scan"}
             </button>
 
-            {/* If the user is missing a personal key AND global is blocked, the 403 error dumps directly here gracefully */}
             {formErrors.global && (
               <div className="border-3 border-double border-destructive bg-destructive/10 text-destructive p-3 text-xs font-bold text-center  animate-in fade-in-50 duration-200">
                 {formErrors.global}

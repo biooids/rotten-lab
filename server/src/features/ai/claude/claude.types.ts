@@ -1,8 +1,6 @@
 //src/features/ai/claude/claude.types.ts
-export type ClaudeModelId =
-  | "claude-sonnet-4-6"
-  | "claude-opus-4-7"
-  | "claude-haiku-4-5";
+import type { ClaudeModelId } from "./claude.config.js";
+export type { ClaudeModelId };
 
 export interface ScanRequestDTO {
   targetUrl: string;
@@ -16,7 +14,8 @@ export interface DatabaseScanReport {
   scan_type: "url" | "repo";
   ai_provider: string;
   ai_model: string;
-  status: "pending" | "processing" | "completed" | "failed";
+  status: "pending" | "processing" | "completed" | "failed" | "cancelled";
+  status_message: string | null;
   engine_warnings: string[];
   scanned_by: string | null;
   total_chunks: number;

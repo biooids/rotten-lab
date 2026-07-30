@@ -197,6 +197,8 @@ export const authController = {
             avatar_url: null,
             hasGeminiKey: false,
             hasClaudeKey: false,
+            preferSystemAiKey: false,
+            has_system_ai_access: false, // ADD THIS LINE
           },
           accessToken,
         }),
@@ -504,6 +506,8 @@ export const authController = {
             avatar_url: fullUser.avatar_url || null,
             hasGeminiKey: !!fullUser.gemini_api_key,
             hasClaudeKey: !!fullUser.claude_api_key,
+            preferSystemAiKey: fullUser.prefer_system_ai_key === true,
+            has_system_ai_access: fullUser.has_system_ai_access === true, // ADD THIS LINE
           },
         }),
       );
@@ -692,6 +696,8 @@ export const authController = {
             avatar_url: user.avatar_url || null,
             hasGeminiKey: !!user.gemini_api_key,
             hasClaudeKey: !!user.claude_api_key,
+            preferSystemAiKey: user.prefer_system_ai_key === true,
+            has_system_ai_access: user.has_system_ai_access === true, // ADD THIS LINE
           },
         }),
       );
@@ -937,6 +943,7 @@ export const authController = {
     let body: UpdateAccountDTO;
     try {
       body = (await json(req)) as UpdateAccountDTO;
+      console.log("2. CONTROLLER RECEIVED BODY:", body);
     } catch (err) {
       process.stderr.write(
         `[updateAccount] JSON Parse Error: ${(err as Error).message}\nStack: ${(err as Error).stack}\n`,
@@ -947,8 +954,14 @@ export const authController = {
     }
 
     try {
-      const { username, profileTitle, avatarUrl, geminiApiKey, claudeApiKey } =
-        body;
+      const {
+        username,
+        profileTitle,
+        avatarUrl,
+        geminiApiKey,
+        claudeApiKey,
+        preferSystemAiKey,
+      } = body;
 
       const imageExtensions = /\.(jpeg|jpg|gif|png|webp|svg)(\?.*)?(#.*)?$/i;
 
@@ -1070,13 +1083,17 @@ export const authController = {
         }
       }
 
-      // 5. Manually update API Keys if provided
-      if (geminiApiKey !== undefined || claudeApiKey !== undefined) {
+      if (
+        geminiApiKey !== undefined ||
+        claudeApiKey !== undefined ||
+        preferSystemAiKey !== undefined
+      ) {
         try {
           await authService.updateApiKeys(
             targetId,
             geminiApiKey !== undefined ? geminiApiKey.trim() : null,
             claudeApiKey !== undefined ? claudeApiKey.trim() : null,
+            preferSystemAiKey !== undefined ? preferSystemAiKey : null,
           );
         } catch (err) {
           process.stderr.write(
@@ -1113,6 +1130,8 @@ export const authController = {
           role: user.role,
           hasGeminiKey: !!user.gemini_api_key,
           hasClaudeKey: !!user.claude_api_key,
+          preferSystemAiKey: user.prefer_system_ai_key === true,
+          has_system_ai_access: user.has_system_ai_access === true,
           created_at: user.created_at,
           updated_at: user.updated_at,
         };

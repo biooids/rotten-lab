@@ -13,6 +13,7 @@ export const geminiRoutes = async ({
 }): Promise<boolean> => {
   // Guard clause: Exit instantly if not a Gemini route
   if (!pathname.startsWith("/api/v1/ai/gemini")) return false;
+
   // Route: GET /api/v1/ai/gemini/test-connection
   if (
     pathname === "/api/v1/ai/gemini/test-connection" &&
@@ -39,6 +40,35 @@ export const geminiRoutes = async ({
     await geminiController.getHistory(req, res);
     return true;
   }
+
+  // --- ADDED: Route: POST /api/v1/ai/gemini/report/:id/cancel ---
+  if (
+    pathname.startsWith("/api/v1/ai/gemini/report/") &&
+    pathname.endsWith("/cancel") &&
+    req.method === "POST"
+  ) {
+    // Extract the dynamic UUID from the path string
+    const reportId = pathname
+      .replace("/api/v1/ai/gemini/report/", "")
+      .replace("/cancel", "");
+
+    // UUID basic format validation check to prevent junk querying
+    const uuidRegex =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(reportId)) {
+      process.stderr.write(
+        `[HTTP_REJECT] Invalid Report ID format in Gemini Router (Cancel): ${reportId}\n`,
+      );
+      res.setHeader("Content-Type", "application/json");
+      res.statusCode = 400;
+      res.end(JSON.stringify({ error: "Invalid report ID format requested." }));
+      return true;
+    }
+
+    await geminiController.cancelScan(req, res, reportId);
+    return true;
+  }
+  // --- END ADDED CANCEL ROUTE ---
 
   // Route: GET /api/v1/ai/gemini/report/:id (Polled by frontend to check status/data)
   if (

@@ -96,6 +96,19 @@ export const geminiApiSlice = createApi({
       ],
     }),
 
+    // --- ADDED: CANCEL SCAN ENDPOINT ---
+    cancelGeminiScan: builder.mutation<{ message: string }, string>({
+      query: (reportId) => ({
+        url: `/ai/gemini/report/${reportId}/cancel`,
+        method: "POST",
+      }),
+      // Force RTK to refresh both the specific report view and the history list
+      invalidatesTags: (result, error, reportId) => [
+        { type: "GeminiScan", id: reportId },
+        "GeminiHistory",
+      ],
+    }),
+
     // --- ADDED: TELEMETRY PING ---
     testGeminiConnection: builder.mutation<
       {
@@ -123,4 +136,5 @@ export const {
   useGetChatHistoryQuery,
   useSendChatMessageMutation,
   useTestGeminiConnectionMutation,
+  useCancelGeminiScanMutation,
 } = geminiApiSlice;

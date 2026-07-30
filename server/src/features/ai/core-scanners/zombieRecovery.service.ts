@@ -10,10 +10,11 @@ export const zombieRecoveryService = {
     );
 
     try {
+      // UPDATED: Now sweeps both 'pending' and 'processing' states so stuck initializations aren't orphaned
       const res = await pool.query(`
         SELECT id, target_url, scan_type, scanned_by, ai_provider, ai_model 
         FROM scan_reports 
-        WHERE status = 'processing'
+        WHERE status IN ('pending', 'processing')
       `);
 
       if (res.rows.length === 0) {
@@ -24,7 +25,7 @@ export const zombieRecoveryService = {
       }
 
       process.stdout.write(
-        `[ZOMBIE_SWEEPER] Found ${res.rows.length} stuck jobs. Resuming native promises...\n`,
+        `[ZOMBIE_SWEEPER] Found ${res.rows.length} stuck jobs (pending/processing). Resuming background workers...\n`,
       );
 
       for (const report of res.rows) {
@@ -37,10 +38,9 @@ export const zombieRecoveryService = {
                 report.scanned_by,
                 report.ai_model,
               )
-              // MODIFIED: Expanded error logging to dump the full stack and raw object
               .catch((err: any) => {
                 process.stderr.write(
-                  `[ZOMBIE_CRASH_GEMINI_URL] Failed to resume: ${err?.message || err}\nStack: ${err?.stack || "no stack"}\n`,
+                  `[ZOMBIE_CRASH_GEMINI_URL] Failed to resume report ID ${report.id}: ${err?.message || err}\nStack: ${err?.stack || "no stack"}\n`,
                 );
                 process.stderr.write(
                   `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
@@ -54,10 +54,9 @@ export const zombieRecoveryService = {
                 report.scanned_by,
                 report.ai_model,
               )
-              // MODIFIED: Expanded error logging to dump the full stack and raw object
               .catch((err: any) => {
                 process.stderr.write(
-                  `[ZOMBIE_CRASH_GEMINI_REPO] Failed to resume: ${err?.message || err}\nStack: ${err?.stack || "no stack"}\n`,
+                  `[ZOMBIE_CRASH_GEMINI_REPO] Failed to resume report ID ${report.id}: ${err?.message || err}\nStack: ${err?.stack || "no stack"}\n`,
                 );
                 process.stderr.write(
                   `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
@@ -73,10 +72,9 @@ export const zombieRecoveryService = {
                 report.scanned_by,
                 report.ai_model,
               )
-              // MODIFIED: Expanded error logging to dump the full stack and raw object
               .catch((err: any) => {
                 process.stderr.write(
-                  `[ZOMBIE_CRASH_CLAUDE_URL] Failed to resume: ${err?.message || err}\nStack: ${err?.stack || "no stack"}\n`,
+                  `[ZOMBIE_CRASH_CLAUDE_URL] Failed to resume report ID ${report.id}: ${err?.message || err}\nStack: ${err?.stack || "no stack"}\n`,
                 );
                 process.stderr.write(
                   `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
@@ -90,10 +88,9 @@ export const zombieRecoveryService = {
                 report.scanned_by,
                 report.ai_model,
               )
-              // MODIFIED: Expanded error logging to dump the full stack and raw object
               .catch((err: any) => {
                 process.stderr.write(
-                  `[ZOMBIE_CRASH_CLAUDE_REPO] Failed to resume: ${err?.message || err}\nStack: ${err?.stack || "no stack"}\n`,
+                  `[ZOMBIE_CRASH_CLAUDE_REPO] Failed to resume report ID ${report.id}: ${err?.message || err}\nStack: ${err?.stack || "no stack"}\n`,
                 );
                 process.stderr.write(
                   `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
@@ -103,7 +100,6 @@ export const zombieRecoveryService = {
         }
       }
     } catch (err: any) {
-      // MODIFIED: Expanded database query error logging to ensure no errors are hidden
       process.stderr.write(
         `[ZOMBIE_SWEEPER_ERROR] Failed to query database: ${err?.message || err}\nStack: ${err?.stack || "no stack"}\n`,
       );

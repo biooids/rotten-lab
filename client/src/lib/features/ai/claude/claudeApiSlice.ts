@@ -98,6 +98,18 @@ export const claudeApiSlice = createApi({
         { type: "ClaudeChat", id: findingId },
       ],
     }),
+    // --- ADDED: CANCEL SCAN ENDPOINT ---
+    cancelClaudeScan: builder.mutation<{ message: string }, string>({
+      query: (reportId) => ({
+        url: `/ai/claude/report/${reportId}/cancel`,
+        method: "POST",
+      }),
+      // Force RTK to refresh both the specific report view and the history list
+      invalidatesTags: (result, error, reportId) => [
+        { type: "ClaudeScan", id: reportId },
+        "ClaudeHistory",
+      ],
+    }),
 
     // --- ADDED: TELEMETRY PING ---
     testClaudeConnection: builder.mutation<
@@ -126,4 +138,5 @@ export const {
   useGetClaudeChatHistoryQuery,
   useSendClaudeChatMessageMutation,
   useTestClaudeConnectionMutation,
+  useCancelClaudeScanMutation,
 } = claudeApiSlice;

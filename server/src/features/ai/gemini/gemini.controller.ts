@@ -5,7 +5,8 @@ import jwt from "jsonwebtoken";
 import { geminiService } from "./gemini.service.js";
 import type { GeminiModelId, ScanRequestDTO } from "./gemini.types.js";
 import type { JWTPayload } from "../../auth/auth.types.js";
-import { pool } from "../../../db/psql.js"; // ADDED: Required for user role/key lookup
+import { pool } from "../../../db/psql.js";
+import { DEFAULT_GEMINI_MODEL, VALID_GEMINI_MODELS } from "./gemini.config.js";
 
 const ACCESS_TOKEN_SECRET = process.env["ACCESS_TOKEN_SECRET"];
 
@@ -17,6 +18,7 @@ if (!ACCESS_TOKEN_SECRET) {
 }
 
 export const geminiController = {
+  // --- 1. ASYNC URL SCANNER ENTRY POINT ---
   // --- 1. ASYNC URL SCANNER ENTRY POINT ---
   async scanUrl(req: IncomingMessage, res: ServerResponse): Promise<void> {
     res.setHeader("Content-Type", "application/json");
@@ -97,72 +99,90 @@ export const geminiController = {
     }
 
     // --- ADDED: BYOK & GRANULAR ROLE AUTHORIZATION CHECK ---
-    // If the user is an admin, let them through (they use the global .env key or their BYOK).
-    // If they are a standard user, check their personal key, the global system permission, AND their specific account permission.
-    if (decoded.role === "user") {
-      try {
-        // MODIFIED: Fetching personal key, individual AI access, and global system setting simultaneously
-        const keyCheckSql = `
-          SELECT 
-            u.gemini_api_key,
-            u.has_system_ai_access,
-            (SELECT allow_global_gemini FROM system_settings WHERE id = 1) AS allow_global_gemini
-          FROM users u 
-          WHERE u.id = $1
-        `;
-        const keyRes = await pool.query(keyCheckSql, [decoded.id]);
+    // MODIFIED: Removed the "if (decoded.role === 'user')" check wrapper.
+    // We now explicitly query the DB for ALL users (including admins) to accurately determine which keyType they will use before initializing the report.
+    let keyType: "global" | "personal" = "global"; // Default fallback
 
-        if (keyRes.rows.length === 0) {
-          process.stderr.write(
-            `[HTTP_SHIELD] Rejected: User ID ${decoded.id} not found in database.\n`,
-          );
-          res.statusCode = 404;
-          res.end(JSON.stringify({ error: "User record not found." }));
-          return;
-        }
+    try {
+      // MODIFIED: Added u.role and u.prefer_system_ai_key to correctly replicate routing logic
+      const keyCheckSql = `
+        SELECT 
+          u.role,
+          u.gemini_api_key,
+          u.has_system_ai_access,
+          u.prefer_system_ai_key,
+          (SELECT allow_global_gemini FROM system_settings WHERE id = 1) AS allow_global_gemini
+        FROM users u 
+        WHERE u.id = $1
+      `;
+      const keyRes = await pool.query(keyCheckSql, [decoded.id]);
 
-        const userData = keyRes.rows[0];
-        const hasPersonalKey =
-          userData.gemini_api_key && userData.gemini_api_key.trim() !== "";
-        const hasGlobalAccess = userData.allow_global_gemini === true;
-        const hasIndividualAiAccess = userData.has_system_ai_access === true;
-
-        // MODIFIED: Reject if they lack a personal key AND (global access is off AND individual access is off)
-        if (!hasPersonalKey && !hasGlobalAccess && !hasIndividualAiAccess) {
-          process.stderr.write(
-            `[HTTP_SHIELD] Rejected standard user ${decoded.id}: No BYOK Gemini key configured and global/individual access is denied.\n`,
-          );
-          res.statusCode = 403;
-          res.end(
-            JSON.stringify({
-              error:
-                "Access Denied: You do not have permission to use the system AI engine. You must configure a valid Gemini API key in your Account Settings.",
-            }),
-          );
-          return;
-        }
-      } catch (dbErr: any) {
+      if (keyRes.rows.length === 0) {
         process.stderr.write(
-          `[HTTP_CRASH] Failed to check user API key status: ${dbErr.message}\nStack: ${dbErr.stack}\n`,
+          `[HTTP_SHIELD] Rejected: User ID ${decoded.id} not found in database.\n`,
         );
+        res.statusCode = 404;
+        res.end(JSON.stringify({ error: "User record not found." }));
+        return;
+      }
+
+      const userData = keyRes.rows[0];
+      const hasPersonalKey =
+        userData.gemini_api_key && userData.gemini_api_key.trim() !== "";
+      const hasGlobalAccess = userData.allow_global_gemini === true;
+      const hasIndividualAiAccess = userData.has_system_ai_access === true;
+      const isAdmin =
+        userData.role === "admin" || userData.role === "super_admin";
+      const isSystemAllowed =
+        isAdmin || hasGlobalAccess || hasIndividualAiAccess;
+
+      // MODIFIED: We still reject standard users if they lack a personal key AND lack all system access
+      if (
+        !isAdmin &&
+        !hasPersonalKey &&
+        !hasGlobalAccess &&
+        !hasIndividualAiAccess
+      ) {
         process.stderr.write(
-          `[RAW_ERROR_DUMP] ${JSON.stringify(dbErr, Object.getOwnPropertyNames(dbErr), 2)}\n`,
+          `[HTTP_SHIELD] Rejected standard user ${decoded.id}: No BYOK Gemini key configured and global/individual access is denied.\n`,
         );
-        res.statusCode = 500;
+        res.statusCode = 403;
         res.end(
-          JSON.stringify({ error: "Database error during key validation." }),
+          JSON.stringify({
+            error:
+              "Access Denied: You do not have permission to use the system AI engine. You must configure a valid Gemini API key in your Account Settings.",
+          }),
         );
         return;
       }
+
+      // MODIFIED: Exact logic matching the service file to determine token billing keyType explicitly
+      if (userData.prefer_system_ai_key === true && isSystemAllowed) {
+        keyType = "global";
+      } else if (hasPersonalKey) {
+        keyType = "personal";
+      } else if (isAdmin) {
+        keyType = "global";
+      } else if (hasGlobalAccess || hasIndividualAiAccess) {
+        keyType = "global";
+      }
+    } catch (dbErr: any) {
+      process.stderr.write(
+        `[HTTP_CRASH] Failed to check user API key status: ${dbErr.message}\nStack: ${dbErr.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(dbErr, Object.getOwnPropertyNames(dbErr), 2)}\n`,
+      );
+      res.statusCode = 500;
+      res.end(
+        JSON.stringify({ error: "Database error during key validation." }),
+      );
+      return;
     }
     // --- END BYOK AUTHORIZATION CHECK ---
 
-    let resolvedModel: GeminiModelId = "gemini-2.5-flash";
-    if (
-      body.model === "gemini-2.5-pro" ||
-      body.model === "gemini-2.5-flash" ||
-      body.model === "gemini-2.5-flash-lite"
-    ) {
+    let resolvedModel: GeminiModelId = DEFAULT_GEMINI_MODEL;
+    if (body.model && VALID_GEMINI_MODELS.includes(body.model as any)) {
       resolvedModel = body.model;
     }
 
@@ -173,6 +193,7 @@ export const geminiController = {
         "url",
         decoded.id,
         resolvedModel,
+        keyType, // MODIFIED: Added resolved 5th argument
       );
 
       // Return 202 Accepted immediately to prevent 504 Timeout on Vercel/Client
@@ -216,6 +237,7 @@ export const geminiController = {
     }
   },
 
+  // --- 2. ASYNC REPO SCANNER ENTRY POINT ---
   // --- 2. ASYNC REPO SCANNER ENTRY POINT ---
   async scanRepo(req: IncomingMessage, res: ServerResponse): Promise<void> {
     res.setHeader("Content-Type", "application/json");
@@ -309,74 +331,92 @@ export const geminiController = {
     }
 
     // --- ADDED: BYOK & GRANULAR ROLE AUTHORIZATION CHECK ---
-    // Same check as URL scanner to ensure standard users are paying their own compute cost unless globally/individually granted
-    if (decoded.role === "user") {
-      try {
-        // MODIFIED: Fetching personal key, individual AI access, and global system setting simultaneously
-        const keyCheckSql = `
-          SELECT 
-            u.gemini_api_key,
-            u.has_system_ai_access,
-            (SELECT allow_global_gemini FROM system_settings WHERE id = 1) AS allow_global_gemini
-          FROM users u 
-          WHERE u.id = $1
-        `;
-        const keyRes = await pool.query(keyCheckSql, [decoded.id]);
+    // MODIFIED: Removed the "if (decoded.role === 'user')" check wrapper.
+    // We now explicitly query the DB for ALL users (including admins) to accurately determine which keyType they will use before initializing the report.
+    let keyType: "global" | "personal" = "global"; // Default fallback
 
-        if (keyRes.rows.length === 0) {
-          process.stderr.write(
-            `[HTTP_SHIELD] Rejected: User ID ${decoded.id} not found in database.\n`,
-          );
-          res.statusCode = 404;
-          res.end(JSON.stringify({ error: "User record not found." }));
-          return;
-        }
+    try {
+      // MODIFIED: Added u.role and u.prefer_system_ai_key to correctly replicate routing logic
+      const keyCheckSql = `
+        SELECT 
+          u.role,
+          u.gemini_api_key,
+          u.has_system_ai_access,
+          u.prefer_system_ai_key,
+          (SELECT allow_global_gemini FROM system_settings WHERE id = 1) AS allow_global_gemini
+        FROM users u 
+        WHERE u.id = $1
+      `;
+      const keyRes = await pool.query(keyCheckSql, [decoded.id]);
 
-        const userData = keyRes.rows[0];
-        const hasPersonalKey =
-          userData.gemini_api_key && userData.gemini_api_key.trim() !== "";
-        const hasGlobalAccess = userData.allow_global_gemini === true;
-        const hasIndividualAiAccess = userData.has_system_ai_access === true;
-
-        // MODIFIED: Reject if they lack a personal key AND (global access is off AND individual access is off)
-        if (!hasPersonalKey && !hasGlobalAccess && !hasIndividualAiAccess) {
-          process.stderr.write(
-            `[HTTP_SHIELD] Rejected standard user ${decoded.id}: No BYOK Gemini key configured and global/individual access is denied.\n`,
-          );
-          res.statusCode = 403;
-          res.end(
-            JSON.stringify({
-              error:
-                "Access Denied: You do not have permission to use the system AI engine. You must configure a valid Gemini API key in your Account Settings.",
-            }),
-          );
-          return;
-        }
-      } catch (dbErr: any) {
+      if (keyRes.rows.length === 0) {
         process.stderr.write(
-          `[HTTP_CRASH] Failed to check user API key status: ${dbErr.message}\nStack: ${dbErr.stack}\n`,
+          `[HTTP_SHIELD] Rejected: User ID ${decoded.id} not found in database.\n`,
         );
+        res.statusCode = 404;
+        res.end(JSON.stringify({ error: "User record not found." }));
+        return;
+      }
+
+      const userData = keyRes.rows[0];
+      const hasPersonalKey =
+        userData.gemini_api_key && userData.gemini_api_key.trim() !== "";
+      const hasGlobalAccess = userData.allow_global_gemini === true;
+      const hasIndividualAiAccess = userData.has_system_ai_access === true;
+      const isAdmin =
+        userData.role === "admin" || userData.role === "super_admin";
+      const isSystemAllowed =
+        isAdmin || hasGlobalAccess || hasIndividualAiAccess;
+
+      // MODIFIED: We still reject standard users if they lack a personal key AND lack all system access
+      if (
+        !isAdmin &&
+        !hasPersonalKey &&
+        !hasGlobalAccess &&
+        !hasIndividualAiAccess
+      ) {
         process.stderr.write(
-          `[RAW_ERROR_DUMP] ${JSON.stringify(dbErr, Object.getOwnPropertyNames(dbErr), 2)}\n`,
+          `[HTTP_SHIELD] Rejected standard user ${decoded.id}: No BYOK Gemini key configured and global/individual access is denied.\n`,
         );
-        res.statusCode = 500;
+        res.statusCode = 403;
         res.end(
-          JSON.stringify({ error: "Database error during key validation." }),
+          JSON.stringify({
+            error:
+              "Access Denied: You do not have permission to use the system AI engine. You must configure a valid Gemini API key in your Account Settings.",
+          }),
         );
         return;
       }
+
+      // MODIFIED: Exact logic matching the service file to determine token billing keyType explicitly
+      if (userData.prefer_system_ai_key === true && isSystemAllowed) {
+        keyType = "global";
+      } else if (hasPersonalKey) {
+        keyType = "personal";
+      } else if (isAdmin) {
+        keyType = "global";
+      } else if (hasGlobalAccess || hasIndividualAiAccess) {
+        keyType = "global";
+      }
+    } catch (dbErr: any) {
+      process.stderr.write(
+        `[HTTP_CRASH] Failed to check user API key status: ${dbErr.message}\nStack: ${dbErr.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(dbErr, Object.getOwnPropertyNames(dbErr), 2)}\n`,
+      );
+      res.statusCode = 500;
+      res.end(
+        JSON.stringify({ error: "Database error during key validation." }),
+      );
+      return;
     }
     // --- END BYOK AUTHORIZATION CHECK ---
 
-    let resolvedModel: GeminiModelId = "gemini-2.5-flash";
-    if (
-      body.model === "gemini-2.5-pro" ||
-      body.model === "gemini-2.5-flash" ||
-      body.model === "gemini-2.5-flash-lite"
-    ) {
+    let resolvedModel: GeminiModelId = DEFAULT_GEMINI_MODEL;
+    if (body.model && VALID_GEMINI_MODELS.includes(body.model as any)) {
       resolvedModel = body.model;
     }
-
     try {
       // Create Database Record immediately
       const report = await geminiService.initializeReport(
@@ -384,6 +424,7 @@ export const geminiController = {
         "repo",
         decoded.id,
         resolvedModel,
+        keyType, // MODIFIED: Added resolved 5th argument
       );
 
       // Return 202 Accepted immediately
@@ -629,6 +670,87 @@ export const geminiController = {
           error: "Connection failed.",
           details: err.message,
         }),
+      );
+    }
+  },
+  // --- ADD THIS NEW METHOD TO geminiController ---
+  async cancelScan(
+    req: IncomingMessage,
+    res: ServerResponse,
+    reportId: string,
+  ): Promise<void> {
+    res.setHeader("Content-Type", "application/json");
+    process.stdout.write(
+      `\n[HTTP] POST /api/v1/ai/gemini/report/${reportId}/cancel initialized\n`,
+    );
+
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      process.stderr.write(`[HTTP_REJECT] Missing Bearer token.\n`);
+      res.statusCode = 401;
+      res.end(JSON.stringify({ error: "Unauthorized: Missing token." }));
+      return;
+    }
+
+    let decoded: JWTPayload;
+    try {
+      decoded = jwt.verify(
+        authHeader.split(" ")[1] as string,
+        ACCESS_TOKEN_SECRET as string,
+      ) as JWTPayload;
+    } catch (err: any) {
+      process.stderr.write(
+        `[HTTP_REJECT] Invalid JWT: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+      );
+      res.statusCode = 401;
+      res.end(
+        JSON.stringify({ error: "Unauthorized: Invalid or expired token." }),
+      );
+      return;
+    }
+
+    try {
+      // We must ensure the user owns the report they are trying to cancel
+      const updateSql = `
+        UPDATE scan_reports 
+        SET status = 'cancelled', status_message = 'Scan aborted by user.', updated_at = CURRENT_TIMESTAMP 
+        WHERE id = $1 AND scanned_by = $2
+        RETURNING id;
+      `;
+      const updateRes = await pool.query(updateSql, [reportId, decoded.id]);
+
+      if (updateRes.rows.length === 0) {
+        process.stderr.write(
+          `[HTTP_SHIELD] Cancel rejected: Report ${reportId} not found or not owned by user ${decoded.id}.\n`,
+        );
+        res.statusCode = 404;
+        res.end(
+          JSON.stringify({
+            error:
+              "Report not found or you do not have permission to cancel it.",
+          }),
+        );
+        return;
+      }
+
+      process.stdout.write(
+        `[HTTP_SUCCESS] Report ${reportId} cancelled by user ${decoded.id}.\n`,
+      );
+      res.statusCode = 200;
+      res.end(JSON.stringify({ message: "Scan cancelled successfully." }));
+    } catch (err: any) {
+      process.stderr.write(
+        `[HTTP_CRASH] Failed to cancel report in database: ${err.message}\nStack: ${err.stack}\n`,
+      );
+      process.stderr.write(
+        `[RAW_ERROR_DUMP] ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}\n`,
+      );
+      res.statusCode = 500;
+      res.end(
+        JSON.stringify({ error: "Internal error while cancelling scan." }),
       );
     }
   },
