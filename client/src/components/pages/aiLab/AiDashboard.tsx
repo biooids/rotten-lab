@@ -67,7 +67,7 @@ export default function AiDashboard() {
     >
       <div className="max-w-6xl mx-auto space-y-6">
         {/* HEADER & ACTIONS */}
-        <div className="relative border-3 border-double p-6 bg-card flex flex-col gap-6">
+        <div className="relative border-3 border-double p-6 bg-card flex flex-col gap-6 ">
           <CornerFlourish className="-top-1 -left-1" />
           <CornerFlourish className="-top-1 -right-1 rotate-90" />
           <CornerFlourish className="-bottom-1 -left-1 -rotate-90" />
@@ -75,7 +75,7 @@ export default function AiDashboard() {
 
           <div>
             <h1 className="bg-primary text-primary-foreground font-bold p-1 w-fit mb-2 ">
-              Vulnerability Scanners{" "}
+              Vulnerability Scanners bro{" "}
             </h1>
             <p className="text-xs font-bold border-l-3 border-double pl-3">
               Select a tool to start a new scan, or view your history below.

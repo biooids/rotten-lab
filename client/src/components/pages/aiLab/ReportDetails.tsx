@@ -39,6 +39,9 @@ export default function ReportDetails({
   >("idle");
   const [downloadErrorMsg, setDownloadErrorMsg] = useState("");
 
+  // NEW: State for handling cancel errors cleanly in the UI instead of browser alerts
+  const [cancelErrorMsg, setCancelErrorMsg] = useState("");
+
   const [downloadGeminiPdf, { isLoading: isGeminiPdfLoading }] =
     useDownloadGeminiReportPdfMutation();
   const [downloadClaudePdf, { isLoading: isClaudePdfLoading }] =
@@ -123,6 +126,9 @@ export default function ReportDetails({
       )
     )
       return;
+
+    setCancelErrorMsg(""); // Reset previous errors before trying
+
     try {
       if (engine === "claude") {
         await cancelClaudeScan(reportId).unwrap();
@@ -131,7 +137,10 @@ export default function ReportDetails({
       }
     } catch (err: any) {
       console.error("Failed to cancel scan:", err);
-      alert(err?.data?.error || err?.message || "Failed to cancel the scan.");
+      // Removed the alert() and push to standard UI state instead
+      setCancelErrorMsg(
+        err?.data?.error || err?.message || "Failed to cancel the scan.",
+      );
     }
   };
   // <--- ADDED END
@@ -400,16 +409,24 @@ export default function ReportDetails({
                 )}
 
                 {/* <--- ADDED START: CANCEL BUTTON */}
-                <div className="flex justify-end border-t-3 border-double border-foreground/10 pt-3 mt-1">
-                  <button
-                    type="button"
-                    onClick={handleCancelScan}
-                    disabled={isCancelling}
-                    className="border-3 border-double border-destructive text-destructive px-4 py-2 text-xs font-bold hover:bg-destructive hover:text-destructive-foreground disabled:opacity-50 transition-colors cursor-pointer"
-                  >
-                    Button{" "}
-                    {isCancelling ? "Cancelling..." : "[ X ] Cancel Scan"}
-                  </button>
+                <div className="flex flex-col gap-2 border-t-3 border-double border-foreground/10 pt-3 mt-1">
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={handleCancelScan}
+                      disabled={isCancelling}
+                      className="border-3 border-double border-destructive text-destructive px-4 py-2 text-xs font-bold hover:bg-destructive hover:text-destructive-foreground disabled:opacity-50 transition-colors cursor-pointer"
+                    >
+                      Button{" "}
+                      {isCancelling ? "Cancelling..." : "[ X ] Cancel Scan"}
+                    </button>
+                  </div>
+                  {/* Replaced Browser Alert with this UI error block */}
+                  {cancelErrorMsg && (
+                    <div className="text-xs font-bold border-3 border-double border-destructive text-destructive bg-destructive/10 px-3 py-2 text-right">
+                      {cancelErrorMsg}
+                    </div>
+                  )}
                 </div>
                 {/* <--- ADDED END */}
               </div>
@@ -417,127 +434,151 @@ export default function ReportDetails({
           </div>
         )}
 
-        {!isScanRunning && activeReport?.status === "completed" && (
-          <div className="flex flex-col gap-6 pt-2">
-            <div className="text-xs font-bold p-4 border-3 border-double bg-background flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center">
-              <span className="truncate w-full sm:w-[70%]">
-                Target: {activeReport.target_url}
-              </span>
-
-              <div className="flex flex-col gap-2 items-end">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="whitespace-nowrap bg-primary text-primary-foreground px-2 py-1 border-3 border-double">
-                    Vulnerabilities Found:{" "}
-                    {meta?.totalItems || activeFindings.length}
+        {/* --- CHANGED: Now evaluates as true for both completed and cancelled status --- */}
+        {!isScanRunning &&
+          (activeReport?.status === "completed" ||
+            activeReport?.status === "cancelled") && (
+            <div className="flex flex-col gap-6 pt-2">
+              {/* NEW: Displays the top banner explaining why it's a partial report if they cancelled */}
+              {activeReport?.status === "cancelled" && (
+                <div className="border-3 border-double border-muted-foreground p-4 bg-muted/20 flex flex-col gap-2">
+                  <span className="text-sm font-bold text-muted-foreground">
+                    Scan Aborted by User
                   </span>
-                  <button
-                    type="button"
-                    onClick={handleDownloadPdf}
-                    disabled={isPdfLoading}
-                    className="whitespace-nowrap border-3 border-double px-3 py-1 hover:bg-primary hover:text-primary-foreground disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-foreground transition-colors cursor-pointer"
-                  >
-                    {isPdfLoading ? "Downloading..." : "Download PDF"}
-                  </button>
-                </div>
-
-                {downloadStatus === "success" && (
-                  <div className="text-sm font-bold border-3 border-double border-primary text-primary bg-primary/10 px-2 py-1">
-                    PDF downloaded successfully.
-                  </div>
-                )}
-                {downloadStatus === "error" && (
-                  <div className="text-sm font-bold border-3 border-double border-destructive text-destructive bg-destructive/10 px-2 py-1 flex flex-col text-right">
-                    <span>Failed to download PDF.</span>
-                    <span className="opacity-80">{downloadErrorMsg}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {activeReport.engine_warnings &&
-              activeReport.engine_warnings.length > 0 && (
-                <div className="border-3 border-double border-yellow-500 p-4 bg-yellow-500/10 flex flex-col gap-2">
-                  <span className="text-xs font-bold text-yellow-500 ">
-                    Engine Warnings ({activeReport.engine_warnings.length})
+                  <span className="opacity-90 text-xs">
+                    Showing partial results. {activeFindings.length}{" "}
+                    vulnerabilities were identified in the {completedChunks}{" "}
+                    chunks processed before cancellation.
                   </span>
-                  <ul className="list-disc list-inside text-xs font-bold opacity-80 space-y-1">
-                    {activeReport.engine_warnings.map(
-                      (warn: string, idx: number) => (
-                        <li key={idx}>{warn}</li>
-                      ),
-                    )}
-                  </ul>
+                  {activeReport?.status_message && (
+                    <div className="text-xs font-mono opacity-60 border-l-2 border-muted-foreground pl-3 py-1 mt-2">
+                      {activeReport.status_message}
+                    </div>
+                  )}
                 </div>
               )}
 
-            {activeFindings.length === 0 ? (
-              <div className="border-3 border-double p-8 text-center text-sm font-bold bg-primary/5 text-primary flex flex-col gap-2">
-                <span>No vulnerabilities detected during the scan.</span>
-                {/* <--- ADDED START: Display 0-finding status message */}
-                {activeReport?.status_message && (
-                  <span className="opacity-80 text-xs block mt-2">
-                    Backend Log: {activeReport.status_message}
-                  </span>
-                )}
-                {/* <--- ADDED END */}
-              </div>
-            ) : (
-              <div className="flex flex-col gap-4">
-                {/* NEW: GROUPING TOGGLE BAR */}
-                <div className="flex items-center justify-between border-3 border-double bg-background p-3">
-                  <span className="text-xs font-bold">View Mode:</span>
-                  <button
-                    onClick={() => setGroupSimilar(!groupSimilar)}
-                    className={cn(
-                      "border-3 border-double px-3 py-1 text-xs font-bold transition-colors",
-                      groupSimilar
-                        ? "bg-primary text-primary-foreground"
-                        : "hover:bg-primary hover:text-primary-foreground",
-                    )}
-                  >
-                    {groupSimilar ? "Grouped by Type" : "Raw Findings"}
-                  </button>
-                </div>
+              <div className="text-xs font-bold p-4 border-3 border-double bg-background flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center">
+                <span className="truncate w-full sm:w-[70%]">
+                  Target: {activeReport.target_url}
+                </span>
 
-                <div className="grid grid-cols-1 gap-4">
-                  {/* Map over the new displayedFindings array instead of activeFindings */}
-                  {displayedFindings.map((finding: any) => (
-                    <VulnerabilityCard
-                      key={finding.id}
-                      finding={finding}
-                      reportId={reportId}
-                      engine={engine}
-                    />
-                  ))}
-                </div>
-
-                {meta && meta.totalPages > 1 && (
-                  <div className="flex items-center justify-between border-t-3 border-double pt-4 mt-2">
-                    <button
-                      onClick={() => setPage((p) => Math.max(1, p - 1))}
-                      disabled={page === 1}
-                      className="border-3 border-double px-3 py-1 text-xs font-bold hover:bg-primary hover:text-primary-foreground disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-foreground transition-colors"
-                    >
-                      Previous
-                    </button>
-                    <span className="text-xs font-bold">
-                      Page {meta.currentPage} of {meta.totalPages}
+                <div className="flex flex-col gap-2 items-end">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="whitespace-nowrap bg-primary text-primary-foreground px-2 py-1 border-3 border-double">
+                      Vulnerabilities Found:{" "}
+                      {meta?.totalItems || activeFindings.length}
                     </span>
                     <button
-                      onClick={() =>
-                        setPage((p) => Math.min(meta.totalPages, p + 1))
-                      }
-                      disabled={page === meta.totalPages}
-                      className="border-3 border-double px-3 py-1 text-xs font-bold hover:bg-primary hover:text-primary-foreground disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-foreground transition-colors"
+                      type="button"
+                      onClick={handleDownloadPdf}
+                      disabled={isPdfLoading}
+                      className="whitespace-nowrap border-3 border-double px-3 py-1 hover:bg-primary hover:text-primary-foreground disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-foreground transition-colors cursor-pointer"
                     >
-                      Next
+                      {isPdfLoading ? "Downloading..." : "Download PDF"}
                     </button>
                   </div>
-                )}
+
+                  {downloadStatus === "success" && (
+                    <div className="text-sm font-bold border-3 border-double border-primary text-primary bg-primary/10 px-2 py-1">
+                      PDF downloaded successfully.
+                    </div>
+                  )}
+                  {downloadStatus === "error" && (
+                    <div className="text-sm font-bold border-3 border-double border-destructive text-destructive bg-destructive/10 px-2 py-1 flex flex-col text-right">
+                      <span>Failed to download PDF.</span>
+                      <span className="opacity-80">{downloadErrorMsg}</span>
+                    </div>
+                  )}
+                </div>
               </div>
-            )}
-          </div>
-        )}
+
+              {activeReport.engine_warnings &&
+                activeReport.engine_warnings.length > 0 && (
+                  <div className="border-3 border-double border-yellow-500 p-4 bg-yellow-500/10 flex flex-col gap-2">
+                    <span className="text-xs font-bold text-yellow-500 ">
+                      Engine Warnings ({activeReport.engine_warnings.length})
+                    </span>
+                    <ul className="list-disc list-inside text-xs font-bold opacity-80 space-y-1">
+                      {activeReport.engine_warnings.map(
+                        (warn: string, idx: number) => (
+                          <li key={idx}>{warn}</li>
+                        ),
+                      )}
+                    </ul>
+                  </div>
+                )}
+
+              {activeFindings.length === 0 ? (
+                <div className="border-3 border-double p-8 text-center text-sm font-bold bg-primary/5 text-primary flex flex-col gap-2">
+                  <span>
+                    No vulnerabilities detected in the processed code.
+                  </span>
+                  {/* <--- ADDED START: Display 0-finding status message */}
+                  {activeReport?.status_message && (
+                    <span className="opacity-80 text-xs block mt-2">
+                      Backend Log: {activeReport.status_message}
+                    </span>
+                  )}
+                  {/* <--- ADDED END */}
+                </div>
+              ) : (
+                <div className="flex flex-col gap-4">
+                  {/* NEW: GROUPING TOGGLE BAR */}
+                  <div className="flex items-center justify-between border-3 border-double bg-background p-3">
+                    <span className="text-xs font-bold">View Mode:</span>
+                    <button
+                      onClick={() => setGroupSimilar(!groupSimilar)}
+                      className={cn(
+                        "border-3 border-double px-3 py-1 text-xs font-bold transition-colors",
+                        groupSimilar
+                          ? "bg-primary text-primary-foreground"
+                          : "hover:bg-primary hover:text-primary-foreground",
+                      )}
+                    >
+                      {groupSimilar ? "Grouped by Type" : "Raw Findings"}
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4">
+                    {/* Map over the new displayedFindings array instead of activeFindings */}
+                    {displayedFindings.map((finding: any) => (
+                      <VulnerabilityCard
+                        key={finding.id}
+                        finding={finding}
+                        reportId={reportId}
+                        engine={engine}
+                      />
+                    ))}
+                  </div>
+
+                  {meta && meta.totalPages > 1 && (
+                    <div className="flex items-center justify-between border-t-3 border-double pt-4 mt-2">
+                      <button
+                        onClick={() => setPage((p) => Math.max(1, p - 1))}
+                        disabled={page === 1}
+                        className="border-3 border-double px-3 py-1 text-xs font-bold hover:bg-primary hover:text-primary-foreground disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-foreground transition-colors"
+                      >
+                        Previous
+                      </button>
+                      <span className="text-xs font-bold">
+                        Page {meta.currentPage} of {meta.totalPages}
+                      </span>
+                      <button
+                        onClick={() =>
+                          setPage((p) => Math.min(meta.totalPages, p + 1))
+                        }
+                        disabled={page === meta.totalPages}
+                        className="border-3 border-double px-3 py-1 text-xs font-bold hover:bg-primary hover:text-primary-foreground disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-foreground transition-colors"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
         {!isScanRunning && activeReport?.status === "failed" && (
           <div className="border-3 border-double border-destructive p-4 bg-destructive/10 flex flex-col gap-3 mt-2">
@@ -565,19 +606,6 @@ export default function ReportDetails({
                 </li>
               )}
             </ul>
-          </div>
-        )}
-
-        {!isScanRunning && activeReport?.status === "cancelled" && (
-          <div className="border-3 border-double border-muted-foreground p-4 bg-muted/20 flex flex-col gap-3 mt-2">
-            <span className="text-xs font-bold text-muted-foreground">
-              Scan Cancelled
-            </span>
-            {activeReport?.status_message && (
-              <div className="text-sm font-bold opacity-90 border-l-2 border-muted-foreground pl-3 py-1">
-                {activeReport.status_message}
-              </div>
-            )}
           </div>
         )}
       </div>
